@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#cfdde3" />
+    <title>TND Car Chase</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;600&display=swap" />
+  </head>
+  <body>
+    <canvas id="view"></canvas>
+
+    <div id="loading" class="loading">
+      <div class="spinner"></div>
+      <p id="loading-text">paving the car park…</p>
+    </div>
+
+    <header class="brand" id="brand">tnd car <b>chase</b></header>
+
+    <section id="title" class="title hidden">
+      <div class="title-left">
+        <h1>tnd car <b>chase</b></h1>
+        <p class="tag">a remote-controlled drive through a multi-storey car park.<br />your phone is the remote.</p>
+        <ol class="steps">
+          <li><span>1</span>scan the code with your phone's camera</li>
+          <li><span>2</span>drag your thumb on the touchpad to drive</li>
+          <li><span>3</span>left thumb: guns &amp; missiles</li>
+          <li><span>4</span>find the gap on the roof…</li>
+        </ol>
+        <button id="kb-start" class="ghost">or drive with the keyboard <kbd>enter</kbd></button>
+      </div>
+      <div class="qr-card" id="qr-card">
+        <div class="qr-head">
+          <span class="dot" id="qr-dot"></span>
+          <span id="qr-status">waiting for phone</span>
+        </div>
+        <canvas id="qr"></canvas>
+        <div class="room">room <b id="room-code">—</b></div>
+        <a class="url" id="qr-url" target="_blank" rel="noopener"></a>
+        <p class="lan-note">phone and computer must be on the same wi-fi</p>
+      </div>
+    </section>
+
+    <div id="hud" class="hud hidden">
+      <div class="speedo"><b id="speed">0</b><small>km/h</small><i id="gear">N</i></div>
+      <div class="arms">
+        <div class="heat" id="heat"><span>gun</span><div class="bar"><div id="heat-fill"></div></div></div>
+        <div class="msl"><span>msl</span><div class="pips" id="pips"></div></div>
+      </div>
+      <div class="lock hidden" id="lock"><span>lock</span></div>
+      <button class="link-chip" id="link-chip" title="Show pairing code (Q)">
+        <svg viewBox="0 0 24 24" width="14" height="14"><rect x="6" y="2" width="12" height="20" rx="2.5" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="18" r="1.2" fill="currentColor"/></svg>
+        <span id="link-text">no phone</span>
+      </button>
+      <div class="hints" id="hints">
+        <span><kbd>F</kbd> guns</span>
+        <span><kbd>G</kbd> missile</span>
+        <span><kbd>C</kbd> camera</span>
+        <span><kbd>V</kbd> steering assist</span>
+        <span><kbd>R</kbd> reset car</span>
+        <span><kbd>Q</kbd> pairing code</span>
+        <span><kbd>M</kbd> mute</span>
+        <span><kbd>H</kbd> hide</span>
+      </div>
+      <div class="sound-note" id="sound-note">click anywhere for sound</div>
+    </div>
+
+    <div id="toast" class="toast"></div>
+    <script type="module" src="/src/game/main.ts"></script>
+  </body>
+</html>

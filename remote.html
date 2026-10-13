@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+    <meta name="theme-color" content="#16191d" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <title>RC Remote · TND Car Chase</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Inter:wght@500;700&display=swap" />
+  </head>
+  <body>
+    <main class="device" id="device">
+      <!-- engraved seams and rivets -->
+      <svg class="seams" viewBox="0 0 1000 460" preserveAspectRatio="none" aria-hidden="true">
+        <path d="M 0 118 C 180 110 300 60 395 0" />
+        <path d="M 0 342 C 180 350 300 400 395 460" />
+        <path d="M 520 0 C 560 120 560 340 520 460" />
+        <path d="M 1000 70 C 930 40 860 20 790 0" />
+      </svg>
+      <div class="rivets r1"><i></i><i></i><i></i></div>
+      <div class="rivets r2"><i></i><i></i><i></i></div>
+      <div class="rivets r3"><i></i><i></i><i></i></div>
+      <div class="rivets r4"><i></i><i></i><i></i></div>
+
+      <!-- left: status plate + fire controls -->
+      <section class="left">
+        <div class="plate">
+          <div class="label">rc&middot;link <span>mk&nbsp;ii</span></div>
+          <div class="lcd">
+            <div class="lcd-row"><b id="speed">000</b><small>km/h</small><em id="gear">N</em></div>
+            <div class="lcd-row sub"><span id="status">connecting</span><span id="lockflag" class="lockflag">lock</span></div>
+          </div>
+          <div class="led" id="led" title="link"></div>
+        </div>
+
+        <div class="buttons">
+          <div class="btn-wrap">
+            <button class="fire gun" id="gun" aria-label="Machine guns (hold)"><span>gun</span></button>
+            <div class="heat"><i id="heat"></i></div>
+          </div>
+          <div class="btn-wrap">
+            <button class="fire msl" id="msl" aria-label="Fire missile"><span>msl</span></button>
+            <div class="pips" id="pips"><i></i><i></i><i></i><i></i></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- divider: the stylus -->
+      <div class="stylus" aria-hidden="true"><i></i></div>
+
+      <!-- right: the touchpad -->
+      <section class="right">
+        <div class="pad-bezel">
+          <div class="pad" id="pad">
+            <div class="rings"></div>
+            <div class="cross"></div>
+            <div class="trail" id="trail"></div>
+            <div class="touch" id="touch"></div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <div class="rotate">
+      <div class="phone-icon"></div>
+      <p>turn your phone sideways</p>
+      <small>the remote works in landscape</small>
+    </div>
+    <script type="module" src="/src/remote/main.ts"></script>
+  </body>
+</html>

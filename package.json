@@ -1,0 +1,28 @@
+{
+  "name": "tnd-car-chase",
+  "version": "1.0.0",
+  "scripts": {
+    "dev": "vite",
+    "dev:public": "node scripts/public.mjs",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "preview:public": "node scripts/public.mjs --preview",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@dimforge/rapier3d-compat": "^0.21.0",
+    "qrcode": "^1.5.4",
+    "three": "^0.186.1",
+    "ws": "^8.22.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "@types/qrcode": "^1.5.6",
+    "@types/three": "^0.186.0",
+    "@types/ws": "^8.18.2",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.4"
+  },
+  "type": "module",
+  "private": true
+}
