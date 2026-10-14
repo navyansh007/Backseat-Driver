@@ -1,5 +1,8 @@
 import * as THREE from 'three';
-import { puffTexture } from '../world/textures';
+import { smokeTexture } from '../world/textures';
+
+let smokeTex: THREE.Texture | null = null;
+const SMOKE_TEX = () => (smokeTex ??= smokeTexture());
 
 const tmpM = new THREE.Matrix4();
 const tmpV = new THREE.Vector3();
@@ -36,7 +39,7 @@ export class Particles {
       transparent: true,
       depthWrite: false,
       blending: additive ? THREE.AdditiveBlending : THREE.NormalBlending,
-      uniforms: { map: { value: puffTexture() } },
+      uniforms: { map: { value: SMOKE_TEX() } },
       vertexShader: `
         attribute vec3 aColor; attribute float aAlpha;
         varying vec3 vC; varying float vA; varying vec2 vUv;
@@ -342,6 +345,102 @@ export class Rings {
   }
 }
 
+const NOISE_GLSL = `
+  float hash3(vec3 p) { p = fract(p * 0.3183099 + 0.1); p *= 17.0; return fract(p.x * p.y * p.z * (p.x + p.y + p.z)); }
+  float vnoise(vec3 x) {
+    vec3 i = floor(x); vec3 f = fract(x); f = f * f * (3.0 - 2.0 * f);
+    return mix(mix(mix(hash3(i + vec3(0,0,0)), hash3(i + vec3(1,0,0)), f.x),
+                   mix(hash3(i + vec3(0,1,0)), hash3(i + vec3(1,1,0)), f.x), f.y),
+               mix(mix(hash3(i + vec3(0,0,1)), hash3(i + vec3(1,0,1)), f.x),
+                   mix(hash3(i + vec3(0,1,1)), hash3(i + vec3(1,1,1)), f.x), f.y), f.z);
+  }
+  float fbm(vec3 p) { float v = 0.0; float a = 0.5; for (int i = 0; i < 5; i++) { v += a * vnoise(p); p *= 2.03; a *= 0.5; } return v; }
+`;
+
+/**
+ * Volumetric-looking fireballs: a dense sphere displaced by animated fractal noise,
+ * shaded from a white-hot core through orange flame to sooty black as it rises and dies.
+ */
+export class Fireballs {
+  private balls: { mesh: THREE.Mesh; mat: THREE.ShaderMaterial; t: number; life: number; size: number; base: THREE.Vector3 }[] = [];
+  private next = 0;
+
+  constructor(scene: THREE.Scene, n = 10) {
+    const geo = new THREE.IcosahedronGeometry(1, 20);
+    for (let i = 0; i < n; i++) {
+      const mat = new THREE.ShaderMaterial({
+        transparent: true,
+        depthWrite: false,
+        uniforms: { uTime: { value: 0 }, uProg: { value: 0 }, uSeed: { value: Math.random() * 100 } },
+        vertexShader: `
+          uniform float uTime; uniform float uProg; uniform float uSeed;
+          varying float vN; varying vec3 vNormal; varying vec3 vView;
+          ${NOISE_GLSL}
+          void main() {
+            vec3 p = position;
+            float n = fbm(p * 1.6 + vec3(0.0, -uTime * 1.6, uSeed));
+            vN = n;
+            float amp = 0.55 + uProg * 0.35;
+            vec3 displaced = p * (0.72 + n * amp);
+            displaced.y += pow(max(p.y, 0.0), 2.0) * uProg * 0.6; // mushrooms upward
+            vec4 mv = modelViewMatrix * vec4(displaced, 1.0);
+            vNormal = normalize(normalMatrix * normal);
+            vView = normalize(-mv.xyz);
+            gl_Position = projectionMatrix * mv;
+          }`,
+        fragmentShader: `
+          uniform float uProg; varying float vN; varying vec3 vNormal; varying vec3 vView;
+          void main() {
+            float rim = clamp(dot(vNormal, vView), 0.0, 1.0);
+            // heat: high in the core early, cooling with age and toward the silhouette
+            float heat = clamp(vN * 1.6 * (1.0 - uProg * 1.15) + rim * 0.45 - 0.15, 0.0, 1.0);
+            vec3 soot = vec3(0.07, 0.06, 0.055);
+            vec3 col = mix(soot, vec3(0.9, 0.18, 0.02), smoothstep(0.05, 0.35, heat));
+            col = mix(col, vec3(1.0, 0.55, 0.1), smoothstep(0.35, 0.65, heat));
+            col = mix(col, vec3(1.0, 0.95, 0.7), smoothstep(0.65, 0.95, heat));
+            float glow = 1.0 + smoothstep(0.35, 1.0, heat) * 2.5; // HDR so bloom picks it up
+            float alpha = (1.0 - smoothstep(0.55, 1.0, uProg)) * (0.6 + rim * 0.4);
+            gl_FragColor = vec4(col * glow, alpha);
+          }`,
+      });
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.visible = false;
+      mesh.renderOrder = 5;
+      scene.add(mesh);
+      this.balls.push({ mesh, mat, t: 0, life: 1, size: 1, base: new THREE.Vector3() });
+    }
+  }
+
+  spawn(p: THREE.Vector3, size: number, life = 1.6) {
+    const b = this.balls[this.next];
+    this.next = (this.next + 1) % this.balls.length;
+    b.t = 0;
+    b.life = life;
+    b.size = size;
+    b.base.copy(p);
+    b.mat.uniforms.uSeed.value = Math.random() * 100;
+    b.mesh.rotation.set(Math.random() * 6, Math.random() * 6, Math.random() * 6);
+    b.mesh.visible = true;
+  }
+
+  update(dt: number) {
+    for (const b of this.balls) {
+      if (!b.mesh.visible) continue;
+      b.t += dt;
+      const k = b.t / b.life;
+      if (k >= 1) {
+        b.mesh.visible = false;
+        continue;
+      }
+      const grow = 1 - Math.pow(1 - Math.min(1, k * 2.2), 3); // fast blast, then billow
+      b.mesh.scale.setScalar(b.size * (0.25 + grow * 0.9 + k * 0.35));
+      b.mesh.position.copy(b.base).setY(b.base.y + k * k * b.size * 1.6);
+      b.mat.uniforms.uTime.value += dt;
+      b.mat.uniforms.uProg.value = k;
+    }
+  }
+}
+
 /** All combat effects bundled together. */
 export class CombatFx {
   readonly fire: Particles;
@@ -351,8 +450,10 @@ export class CombatFx {
   readonly debris: Debris;
   readonly flashes: Flashes;
   readonly rings: Rings;
+  readonly fireballs: Fireballs;
 
   constructor(scene: THREE.Scene) {
+    this.fireballs = new Fireballs(scene, 10);
     this.smoke = new Particles(scene, 500, false);
     this.fire = new Particles(scene, 400, true);
     this.sparks = new Streaks(scene, 300, 0xffc46b);
@@ -371,6 +472,12 @@ export class CombatFx {
   }
 
   explosion(p: THREE.Vector3, scale = 1) {
+    // main fireball plus a couple of offset secondary bursts
+    this.fireballs.spawn(p, 2.6 * scale, 1.7);
+    for (let i = 0; i < 2; i++) {
+      const off = new THREE.Vector3((Math.random() - 0.5) * 2.4, Math.random() * 1.2, (Math.random() - 0.5) * 2.4).multiplyScalar(scale);
+      this.fireballs.spawn(p.clone().add(off), 1.4 * scale, 1.2 + Math.random() * 0.4);
+    }
     for (let i = 0; i < 22 * scale; i++) {
       const dir = new THREE.Vector3(Math.random() - 0.5, Math.random() * 0.9 + 0.1, Math.random() - 0.5).normalize();
       this.fire.emit(p.clone().addScaledVector(dir, Math.random() * scale), dir.multiplyScalar(4 + Math.random() * 7 * scale), {
@@ -413,6 +520,7 @@ export class CombatFx {
     this.debris.update(dt);
     this.flashes.update(dt);
     this.rings.update(dt);
+    this.fireballs.update(dt);
   }
 }
 

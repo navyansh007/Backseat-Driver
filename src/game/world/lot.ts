@@ -60,13 +60,14 @@ export function buildLot(scene: THREE.Scene, phys: Physics): LotWorld {
   const lamp = lampGeo();
   const lampMats: THREE.Matrix4[] = [];
   const trees: { x: number; z: number; kind: number; s: number; r: number }[] = [];
-  const blocksZ = [-8, 11, 30, 49, 68];
+  // three wide-spaced blocks: ~17 m driving aisles between them
+  const blocksZ = [-6, 22, 50];
   const stallW = 2.6;
   const depth = 5.5;
   const kinds = ['sedan', 'sedan', 'sedan', 'hatch', 'hatch', 'suv', 'suv', 'van', 'executive'];
   const grassMat = new THREE.MeshStandardMaterial({ color: 0x79a85a, roughness: 1 });
   for (const zc of blocksZ) {
-    for (const [xa, xb] of [[-100, -9], [9, 100]] as const) {
+    for (const [xa, xb] of [[-100, -15], [15, 100]] as const) {
       const n = Math.floor((xb - xa) / stallW);
       const islands = new Set([0, Math.floor(n / 2), n - 1]);
       for (let i = 0; i < n; i++) {
@@ -86,7 +87,7 @@ export function buildLot(scene: THREE.Scene, phys: Physics): LotWorld {
           const z = zc + side * depth / 2;
           paintLine(x - stallW / 2, 0.012, z, 0.12, depth - 0.2);
           if (i === n - 2 || islands.has(i + 1)) paintLine(x + stallW / 2, 0.012, z, 0.12, depth - 0.2);
-          if (rand() < 0.52) {
+          if (rand() < 0.32) {
             const kind = kinds[(rand() * kinds.length) | 0];
             const reversed = rand() < 0.12;
             const yaw = (side === 1 ? Math.PI : 0) + (reversed ? Math.PI : 0) + (rand() - 0.5) * 0.08;
@@ -101,25 +102,25 @@ export function buildLot(scene: THREE.Scene, phys: Physics): LotWorld {
   // central boulevard: dashed centre line, arrows, speed bumps
   for (let z = -18; z < 98; z += 6) paintLine(0, 0.012, z, 0.15, 3, 0, true);
   const arrowMat = new THREE.MeshStandardMaterial({ map: arrowTexture(), transparent: true, roughness: 0.7, polygonOffset: true, polygonOffsetFactor: -2, depthWrite: false });
-  for (const [z, dir] of [[2, 1], [40, 1], [78, 1], [21, -1], [59, -1]] as const) {
+  for (const [z, dir] of [[8, 1], [40, 1], [78, 1], [22, -1], [62, -1]] as const) {
     const a = new THREE.Mesh(new THREE.PlaneGeometry(1.4, 2.8), arrowMat);
     a.rotation.set(-Math.PI / 2, 0, dir === 1 ? Math.PI : 0);
-    a.position.set(dir === 1 ? 3.5 : -3.5, 0.014, z);
+    a.position.set(dir === 1 ? 6 : -6, 0.014, z);
     scene.add(a);
   }
   const bumpStripe = (x: number, z: number) => {
     phys.world.createCollider(
-      RAPIER.ColliderDesc.capsule(7.5, 0.16).setRotation({ x: 0, y: 0, z: Math.SQRT1_2, w: Math.SQRT1_2 }).setTranslation(x, -0.06, z)
+      RAPIER.ColliderDesc.capsule(14.5, 0.16).setRotation({ x: 0, y: 0, z: Math.SQRT1_2, w: Math.SQRT1_2 }).setTranslation(x, -0.06, z)
         .setCollisionGroups(groups(G.WORLD, 0xffff)),
     );
-    for (let i = -7; i < 7; i++) {
+    for (let i = -14; i < 14; i++) {
       const g = new THREE.CylinderGeometry(0.16, 0.16, 1, 10, 1, false, 0, Math.PI);
       batch.add(g, i % 2 ? mats.paintYellow : mats.dark, new THREE.Matrix4().compose(
         new THREE.Vector3(x + i + 0.5, -0.06, z), new THREE.Quaternion().setFromEuler(new THREE.Euler(0, 0, Math.PI / 2)), new THREE.Vector3(1, 1, 1)), false);
     }
   };
-  bumpStripe(0, 20.5);
-  bumpStripe(0, 58.5);
+  bumpStripe(0, 36);
+  bumpStripe(0, 70);
 
   // aisle in front of the garage
   for (let x = -100; x < 100; x += 6) paintLine(x, 0.012, -22.5, 3, 0.15, 0, true);
@@ -244,7 +245,7 @@ export function buildLot(scene: THREE.Scene, phys: Physics): LotWorld {
 
   // plaza furniture
   const bollards: THREE.Matrix4[] = [];
-  for (let x = -30; x <= 30; x += 3) if (Math.abs(x) > 9) bollards.push(new THREE.Matrix4().makeTranslation(x, 0, z1 - 14));
+  for (let x = -36; x <= 36; x += 3) if (Math.abs(x) > 16) bollards.push(new THREE.Matrix4().makeTranslation(x, 0, z1 - 14));
   scene.add(staticInstances([{ geometry: bollardGeo(), material: propMaterial }], bollards));
   for (const m of bollards) {
     const p = new THREE.Vector3().setFromMatrixPosition(m);
@@ -320,13 +321,7 @@ export function buildLot(scene: THREE.Scene, phys: Physics): LotWorld {
   for (let i = 0; i < 12; i++) props.add('boxBig', 70 + (i % 4) * 1, Math.floor(i / 4) * 0.72, -84);
   batch.box({ x: 80, y: 0.9, z: -86 }, { x: 4, y: 1.8, z: 2 }, mats.paintTeal);
   phys.staticBox({ x: 80, y: 0.9, z: -86 }, { x: 2, y: 0.9, z: 1 });
-  // cone lines along the garage aisle
-  for (let i = 0; i < 16; i++) props.add('cone', -60 + i * 8, 0, -25.5);
-  // trolleys scattered + a corral
-  for (let i = 0; i < 14; i++) {
-    const zc = blocksZ[(rand() * blocksZ.length) | 0] + (rand() < 0.5 ? -8.5 : 8.5) * (rand() < 0.5 ? 1 : 0.9);
-    props.add('trolley', (rand() < 0.5 ? -1 : 1) * (14 + rand() * 80), 0, zc, rand() * Math.PI * 2);
-  }
+  // trolley corral by the entrance
   for (let i = 0; i < 7; i++) props.add('trolley', -60 + i * 0.35, 0, 88, Math.PI / 2);
   // bins along the plaza
   for (let i = 0; i < 6; i++) props.add(i % 2 ? 'bin' : 'binBlue', 50 + i * 0.75, 0, 96);
@@ -355,7 +350,7 @@ export function buildLot(scene: THREE.Scene, phys: Physics): LotWorld {
   return {
     parked,
     props,
-    spawn: { x: 3.5, y: 0, z: 30, yaw: Math.PI },
+    spawn: { x: 6, y: 0, z: 46, yaw: Math.PI },
     update(dt, p) {
       time += dt;
       // gate arms lift when the car approaches

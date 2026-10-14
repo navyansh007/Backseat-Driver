@@ -264,3 +264,44 @@ export function fenceTexture() {
   const t = toTexture(c);
   return t;
 }
+
+/** Billowy smoke sprite: fractal value noise under a soft radial falloff. */
+export function smokeTexture() {
+  const S = 128;
+  const { c, ctx } = canvas(S, S);
+  const rand = rng(99);
+  // lattice of random values, sampled with smooth interpolation at several octaves
+  const N = 16;
+  const grid = Array.from({ length: (N + 1) * (N + 1) }, () => rand());
+  const g = (x: number, y: number) => grid[(y % N) * (N + 1) + (x % N)];
+  const smooth = (t: number) => t * t * (3 - 2 * t);
+  const noise = (x: number, y: number) => {
+    const xi = Math.floor(x), yi = Math.floor(y);
+    const xf = smooth(x - xi), yf = smooth(y - yi);
+    const a = g(xi, yi), b = g(xi + 1, yi), c2 = g(xi, yi + 1), d = g(xi + 1, yi + 1);
+    return a + (b - a) * xf + (c2 - a) * yf + (a - b - c2 + d) * xf * yf;
+  };
+  const img = ctx.createImageData(S, S);
+  for (let y = 0; y < S; y++) {
+    for (let x = 0; x < S; x++) {
+      let f = 0, amp = 0.5, freq = 4 / S;
+      for (let o = 0; o < 4; o++) {
+        f += noise(x * freq * 4 + o * 3.1, y * freq * 4 + o * 1.7) * amp;
+        amp *= 0.5;
+        freq *= 2;
+      }
+      const dx = x / S - 0.5, dy = y / S - 0.5;
+      const r = Math.sqrt(dx * dx + dy * dy) * 2;
+      const fall = Math.max(0, 1 - r) ** 1.6;
+      const a = Math.min(1, Math.max(0, (f - 0.25) * 1.9) * fall * 1.4);
+      const i = (y * S + x) * 4;
+      const shade = 200 + f * 55;
+      img.data[i] = shade;
+      img.data[i + 1] = shade;
+      img.data[i + 2] = shade;
+      img.data[i + 3] = a * 255;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+  return new THREE.CanvasTexture(c);
+}

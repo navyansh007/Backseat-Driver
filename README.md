@@ -2,7 +2,7 @@
 
 A browser driving game where your phone is the remote control. Steer a late-90s executive saloon through a multi-storey car park with a touchpad on your phone, then switch on the guns and missiles.
 
-Inspired by the remote-controlled car chase in *Tomorrow Never Dies* (1997). All models, textures and sounds are generated in code.
+Inspired by the remote-controlled car chase in *Tomorrow Never Dies* (1997). All models, textures and sound effects are generated in code; the soundtrack is an original composition.
 
 ## Features
 
@@ -11,7 +11,8 @@ Inspired by the remote-controlled car chase in *Tomorrow Never Dies* (1997). All
 - **Steering assist.** Counter-steer, spin control, traction control and obstacle avoidance. Press `V` to choose off, light, medium or strong.
 - **Weapons.** Twin bumper machine guns with heat build-up and a roof launcher with four homing missiles.
 - **Destruction.** Cars, barrels, boxes, barriers, trolleys and glass break, explode and burn. Anything wrecked respawns once it is out of the camera's view.
-- **The world.** A two-level car park with ramps and a roof jump, around 200 parked cars you can push, traffic, pedestrians, birds, clouds and a rental showroom.
+- **The world.** A spacious two-level car park with ramps and a roof jump, parked cars you can push, traffic, birds, clouds and a rental showroom.
+- **Soundtrack.** An original score (`bgm.mp3`): the intro plays as you first pull away, then a seamless loop carries the drive.
 
 ## Run it
 
@@ -34,6 +35,7 @@ npm run preview:public # production build behind the ngrok tunnel
 | Handbrake | — | `Space` |
 | Camera / reset / assist | — | `C` / `R` / `V` |
 | Pairing code / mute / hide hints | — | `Q` / `M` / `H` |
+| Music on/off | — | `B` |
 
 ## Tech
 

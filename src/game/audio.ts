@@ -1,3 +1,6 @@
+/** Sound-effect level relative to the music. */
+const SFX_LEVEL = 0.75;
+
 /** Procedural car audio with WebAudio: engine, tyres, wind, impacts. */
 export class CarAudio {
   private ctx: AudioContext | null = null;
@@ -17,9 +20,27 @@ export class CarAudio {
 
   private static RATIOS = [0, 3.4, 2.2, 1.55, 1.18, 0.92, 0.74];
 
+  /** Bus for engine, tyres, wind, guns and explosions. */
+  private sfx!: GainNode;
+  /** Bus for the soundtrack; goes through the master so `M` mutes everything. */
+  musicBus: GainNode | null = null;
+  private readyCallbacks: ((ctx: AudioContext, bus: GainNode) => void)[] = [];
+
+  /** Run cb once audio is allowed to play (after the first user gesture). */
+  onReady(cb: (ctx: AudioContext, bus: GainNode) => void) {
+    if (this.ctx && this.musicBus && this.ctx.state === 'running') cb(this.ctx, this.musicBus);
+    else this.readyCallbacks.push(cb);
+  }
+
+  private flushReady() {
+    if (!this.ctx || !this.musicBus || this.ctx.state !== 'running') return;
+    const list = this.readyCallbacks.splice(0);
+    for (const cb of list) cb(this.ctx, this.musicBus);
+  }
+
   start() {
     if (this.ctx) {
-      void this.ctx.resume();
+      void this.ctx.resume().then(() => this.flushReady());
       return;
     }
     const ctx = new AudioContext();
@@ -28,6 +49,13 @@ export class CarAudio {
     this.master.gain.value = this.muted ? 0 : 0.55;
     const comp = ctx.createDynamicsCompressor();
     this.master.connect(comp).connect(ctx.destination);
+    this.musicBus = ctx.createGain();
+    this.musicBus.connect(this.master);
+    // all sound effects share one bus, kept ~25% below full so the soundtrack stays clear
+    this.sfx = ctx.createGain();
+    this.sfx.gain.value = SFX_LEVEL;
+    this.sfx.connect(this.master);
+    void ctx.resume().then(() => this.flushReady());
 
     // engine: two detuned saws + sub square → shaper → lowpass
     this.engFilter = ctx.createBiquadFilter();
@@ -56,7 +84,7 @@ export class CarAudio {
     this.engA.connect(mix);
     this.engB.connect(mix);
     this.engSub.connect(subGain).connect(mix);
-    mix.connect(shaper).connect(this.engFilter).connect(this.engGain).connect(this.master);
+    mix.connect(shaper).connect(this.engFilter).connect(this.engGain).connect(this.sfx);
     for (const o of [this.engA, this.engB, this.engSub]) o.start();
 
     // noise sources
@@ -74,7 +102,7 @@ export class CarAudio {
     this.screechFilter.Q.value = 9;
     this.screechGain = ctx.createGain();
     this.screechGain.gain.value = 0;
-    screechSrc.connect(this.screechFilter).connect(this.screechGain).connect(this.master);
+    screechSrc.connect(this.screechFilter).connect(this.screechGain).connect(this.sfx);
     screechSrc.start();
 
     const windSrc = ctx.createBufferSource();
@@ -85,7 +113,7 @@ export class CarAudio {
     windFilter.frequency.value = 500;
     this.windGain = ctx.createGain();
     this.windGain.gain.value = 0;
-    windSrc.connect(windFilter).connect(this.windGain).connect(this.master);
+    windSrc.connect(windFilter).connect(this.windGain).connect(this.sfx);
     windSrc.start();
   }
 
@@ -134,7 +162,7 @@ export class CarAudio {
     const v = Math.min(1, 0.25 + power);
     g.gain.setValueAtTime(v, t);
     g.gain.exponentialRampToValueAtTime(0.001, t + 0.25 + power * 0.3);
-    src.connect(lp).connect(g).connect(this.master);
+    src.connect(lp).connect(g).connect(this.sfx);
     src.start(t, Math.random());
     src.stop(t + 0.7);
     const thump = ctx.createOscillator();
@@ -143,7 +171,7 @@ export class CarAudio {
     const tg = ctx.createGain();
     tg.gain.setValueAtTime(v * 0.9, t);
     tg.gain.exponentialRampToValueAtTime(0.001, t + 0.3);
-    thump.connect(tg).connect(this.master);
+    thump.connect(tg).connect(this.sfx);
     thump.start(t);
     thump.stop(t + 0.35);
   }
@@ -162,7 +190,7 @@ export class CarAudio {
     const g = ctx.createGain();
     g.gain.setValueAtTime(0.5, t);
     g.gain.exponentialRampToValueAtTime(0.001, t + 0.09);
-    src.connect(bp).connect(g).connect(this.master);
+    src.connect(bp).connect(g).connect(this.sfx);
     src.start(t, Math.random() * 1.5);
     src.stop(t + 0.1);
     const o = ctx.createOscillator();
@@ -172,7 +200,7 @@ export class CarAudio {
     const og = ctx.createGain();
     og.gain.setValueAtTime(0.25, t);
     og.gain.exponentialRampToValueAtTime(0.001, t + 0.07);
-    o.connect(og).connect(this.master);
+    o.connect(og).connect(this.sfx);
     o.start(t);
     o.stop(t + 0.08);
   }
@@ -193,7 +221,7 @@ export class CarAudio {
     g.gain.setValueAtTime(0.0001, t);
     g.gain.exponentialRampToValueAtTime(0.7, t + 0.05);
     g.gain.exponentialRampToValueAtTime(0.001, t + 1.1);
-    src.connect(f).connect(g).connect(this.master);
+    src.connect(f).connect(g).connect(this.sfx);
     src.start(t, Math.random());
     src.stop(t + 1.2);
   }
@@ -213,7 +241,7 @@ export class CarAudio {
     const g = ctx.createGain();
     g.gain.setValueAtTime(vol, t);
     g.gain.exponentialRampToValueAtTime(0.001, t + 1.8);
-    src.connect(lp).connect(g).connect(this.master);
+    src.connect(lp).connect(g).connect(this.sfx);
     src.start(t, Math.random() * 0.5);
     src.stop(t + 1.9);
     const o = ctx.createOscillator();
@@ -222,7 +250,7 @@ export class CarAudio {
     const og = ctx.createGain();
     og.gain.setValueAtTime(vol * 1.2, t);
     og.gain.exponentialRampToValueAtTime(0.001, t + 1.0);
-    o.connect(og).connect(this.master);
+    o.connect(og).connect(this.sfx);
     o.start(t);
     o.stop(t + 1.05);
   }

@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { mergeGeometries, toCreasedNormals } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { plateTexture } from '../world/textures';
+import { blobShadowTexture, plateTexture } from '../world/textures';
 
 /**
  * Parametric procedural car generator. Every car is built from a side profile
@@ -65,14 +65,16 @@ export const SPECS: Record<string, CarSpec> = {
   },
 };
 
-export type PartKey = 'paint' | 'glass' | 'chrome' | 'trim' | 'rubber' | 'head' | 'tail' | 'amber' | 'plate' | 'under';
+export type PartKey =
+  | 'paint' | 'glass' | 'sideGlass' | 'chrome' | 'trim' | 'rubber' | 'head' | 'tail' | 'amber' | 'plate' | 'under'
+  | 'disc' | 'caliper' | 'interior' | 'ao';
 
 export interface CarParts {
   spec: CarSpec;
   /** Merged geometry per material slot (body, excluding wheels when built for the player). */
   parts: Partial<Record<PartKey, THREE.BufferGeometry>>;
-  /** Single wheel geometry, centered, axle along X; outer face at +X. */
-  wheel: { rubber: THREE.BufferGeometry; chrome: THREE.BufferGeometry; trim: THREE.BufferGeometry };
+  /** Single wheel geometry, centered, axle along X; outer face at +X. The caliper does not spin. */
+  wheel: { rubber: THREE.BufferGeometry; chrome: THREE.BufferGeometry; trim: THREE.BufferGeometry; disc: THREE.BufferGeometry; caliper: THREE.BufferGeometry };
   /** Wheel centres in car space (FL, FR, RL, RR). */
   wheelPositions: THREE.Vector3[];
 }
@@ -83,7 +85,7 @@ class Bag {
     const geo = g.index ? g.toNonIndexed() : g.clone();
     if (m) geo.applyMatrix4(m);
     for (const name of Object.keys(geo.attributes)) {
-      if (name !== 'position' && name !== 'normal' && !(key === 'plate' && name === 'uv')) geo.deleteAttribute(name);
+      if (name !== 'position' && name !== 'normal' && !((key === 'plate' || key === 'ao') && name === 'uv')) geo.deleteAttribute(name);
     }
     if (!geo.attributes.normal) geo.computeVertexNormals();
     const list = this.lists.get(key) ?? [];
@@ -142,7 +144,7 @@ function lineZ(a: [number, number], b: [number, number], y: number) {
   return a[0] + (b[0] - a[0]) * t;
 }
 
-export function buildCar(spec: CarSpec, opts: { includeWheels: boolean }): CarParts {
+export function buildCar(spec: CarSpec, opts: { includeWheels: boolean; interior?: boolean }): CarParts {
   const bag = new Bag();
   const { L, W, H, bottom, hoodH, beltH, trunkH } = spec;
   const hz = L / 2;
@@ -190,9 +192,12 @@ export function buildCar(spec: CarSpec, opts: { includeWheels: boolean }): CarPa
     );
   }
 
+  // run the upper profile through a spline so hood, screen base and trunk flow into each other
   const shape = new THREE.Shape();
   shape.moveTo(top[0][0], top[0][1]);
-  for (let i = 1; i < top.length; i++) shape.lineTo(top[i][0], top[i][1]);
+  const smooth = new THREE.SplineCurve(top.slice(1, -1).map(([z, y]) => new THREE.Vector2(z, y))).getPoints(90);
+  for (const p of smooth) shape.lineTo(p.x, p.y);
+  shape.lineTo(top[top.length - 1][0], top[top.length - 1][1]);
   // underside with wheel arches, rear → front
   for (const az of [spec.rearAxleZ, spec.frontAxleZ]) {
     const cy = spec.wheelR;
@@ -217,7 +222,7 @@ export function buildCar(spec: CarSpec, opts: { includeWheels: boolean }): CarPa
     bevelThickness: bevel,
     bevelSize: 0.035,
     bevelOffset: -0.035,
-    bevelSegments: 3,
+    bevelSegments: 5,
     curveSegments: 6,
   });
   // shape (x=z_car, y) extruded along +Z → rotate so extrusion runs along X
@@ -287,9 +292,9 @@ export function buildCar(spec: CarSpec, opts: { includeWheels: boolean }): CarPa
     [rearWin[3][0] - 0.03, rearWin[3][1] - 0.025],
   ];
   for (const side of [-1, 1]) {
-    bag.add('trim', wrapPanel(surround, side, (y, z) => cabinHW(y, z) + 0.003));
-    bag.add('glass', wrapPanel(frontWin, side, (y, z) => cabinHW(y, z) + 0.006));
-    bag.add('glass', wrapPanel(rearWin, side, (y, z) => cabinHW(y, z) + 0.006));
+    bag.add(spec.name === 'executive' ? 'chrome' : 'trim', wrapPanel(surround, side, (y, z) => cabinHW(y, z) + 0.003));
+    bag.add('sideGlass', wrapPanel(frontWin, side, (y, z) => cabinHW(y, z) + 0.006));
+    bag.add('sideGlass', wrapPanel(rearWin, side, (y, z) => cabinHW(y, z) + 0.006));
     bag.add('trim', wrapPanel(pillar, side, (y, z) => cabinHW(y, z) + 0.007));
   }
 
@@ -366,6 +371,53 @@ export function buildCar(spec: CarSpec, opts: { includeWheels: boolean }): CarPa
   // exhaust
   bag.add('chrome', new THREE.CylinderGeometry(0.035, 0.035, 0.12, 12), at(-W * 0.3, bottom + 0.05, -hz + 0.02, Math.PI / 2));
 
+  // panel gaps: thin dark seams wrapped onto the doors
+  const seamTop = beltH - 0.035;
+  const seamBottom = bottom + 0.2;
+  const doorCuts = [lineZ(wsA, wsB, beltH) - 0.04, zB, spec.rear === 'notch' ? spec.rwBaseZ + 0.12 : spec.rearAxleZ + 0.52];
+  for (const side of [-1, 1]) {
+    for (const cz of doorCuts) {
+      const seam: [number, number][] = [[cz + 0.004, seamBottom], [cz + 0.004, seamTop], [cz - 0.004, seamTop], [cz - 0.004, seamBottom]];
+      bag.add('trim', wrapPanel(seam, side, (y, z) => bodyHW(y, z) + 0.0015));
+    }
+    // side indicator repeater on the front wing
+    bag.add('amber', box(0.012, 0.025, 0.07), at(side * (bodyHW(beltH - 0.16, spec.frontAxleZ + 0.55) + 0.004), beltH - 0.16, spec.frontAxleZ + 0.55));
+  }
+
+  // dark wheel-arch liners so you can't see through the arches
+  for (const az of [spec.frontAxleZ, spec.rearAxleZ]) {
+    const liner = new THREE.CylinderGeometry(spec.wheelR + 0.055, spec.wheelR + 0.055, W - 0.22, 20, 1, true, 0, Math.PI);
+    liner.rotateZ(Math.PI / 2);
+    bag.add('under', liner, at(0, spec.wheelR, az));
+  }
+
+  // soft contact shadow under the car
+  const ao = new THREE.PlaneGeometry(W + 0.7, L + 0.8);
+  ao.rotateX(-Math.PI / 2);
+  bag.add('ao', ao, at(0, 0.02, 0));
+
+  // cabin interior (only for the hero car, whose glass is see-through)
+  if (opts.interior) {
+    const seatY = bottom + 0.42;
+    const dashZ = spec.wsBaseZ - 0.3;
+    bag.add('interior', box(W - 0.34, 0.2, 0.45), at(0, beltH - 0.06, dashZ));
+    bag.add('interior', box(W - 0.4, 0.08, 0.5), at(0, beltH + 0.04, dashZ - 0.05, -0.15));
+    const wheelGeo = new THREE.TorusGeometry(0.17, 0.022, 8, 24);
+    bag.add('trim', wheelGeo, at(0.38, beltH + 0.07, dashZ - 0.38, -0.45));
+    bag.add('trim', new THREE.CylinderGeometry(0.03, 0.03, 0.3, 8), at(0.38, beltH + 0.0, dashZ - 0.22, Math.PI / 2 - 0.45));
+    const frontSeatZ = zB + 0.15;
+    const rearSeatZ = (zB + spec.roofRearZ) / 2 - 0.15;
+    for (const sx of [-0.38, 0.38]) {
+      bag.add('interior', box(0.5, 0.14, 0.5), at(sx, seatY, frontSeatZ));
+      bag.add('interior', roundedBox(0.48, 0.62, 0.13, 0.06), at(sx, seatY + 0.38, frontSeatZ - 0.27, -0.2));
+      bag.add('interior', box(0.26, 0.16, 0.1), at(sx, seatY + 0.76, frontSeatZ - 0.33, -0.2));
+    }
+    bag.add('interior', box(W - 0.42, 0.14, 0.5), at(0, seatY, rearSeatZ));
+    bag.add('interior', box(W - 0.42, 0.55, 0.14), at(0, seatY + 0.34, rearSeatZ - 0.3, -0.25));
+    bag.add('interior', box(W - 0.4, 0.04, 0.4), at(0, beltH - 0.02, spec.rwBaseZ + 0.25));
+    bag.add('interior', box(W - 0.3, 0.04, spec.wsBaseZ - spec.rwBaseZ), at(0, bottom + 0.3, (spec.wsBaseZ + spec.rwBaseZ) / 2));
+  }
+
   // ----------------------------------------------------------------- wheels
   const wheel = buildWheel(spec.wheelR, spec.wheelW, spec.name === 'executive');
   const wheelPositions = [
@@ -382,6 +434,8 @@ export function buildCar(spec: CarSpec, opts: { includeWheels: boolean }): CarPa
       bag.add('rubber', flipIfNeeded(wheel.rubber, m, s));
       bag.add('chrome', flipIfNeeded(wheel.chrome, m, s));
       bag.add('trim', flipIfNeeded(wheel.trim, m, s));
+      bag.add('disc', flipIfNeeded(wheel.disc, m, s));
+      bag.add('caliper', flipIfNeeded(wheel.caliper, m, s));
     }
   }
 
@@ -481,7 +535,7 @@ function buildWheel(r: number, w: number, multiSpoke: boolean) {
     new THREE.Vector2(r - 0.045, w / 2),
     new THREE.Vector2(rimR * 0.98, w / 2),
   ];
-  const tyre = new THREE.LatheGeometry(pts, 28);
+  const tyre = new THREE.LatheGeometry(pts, 40);
   tyre.rotateZ(-Math.PI / 2);
   tyre.computeVertexNormals();
 
@@ -519,7 +573,23 @@ function buildWheel(r: number, w: number, multiSpoke: boolean) {
   }
   const trim = mergeGeometries(trimParts)!;
   for (const name of Object.keys(tyre.attributes)) if (name !== 'position' && name !== 'normal') tyre.deleteAttribute(name);
-  return { rubber: tyre.toNonIndexed(), chrome, trim };
+
+  // vented brake disc behind the spokes, caliper clamping it near the top-rear
+  const discGeo = new THREE.CylinderGeometry(rimR * 0.8, rimR * 0.8, 0.028, 28);
+  discGeo.rotateZ(Math.PI / 2);
+  discGeo.translate(w / 2 - 0.1, 0, 0);
+  const hat = new THREE.CylinderGeometry(rimR * 0.34, rimR * 0.34, 0.05, 16);
+  hat.rotateZ(Math.PI / 2);
+  hat.translate(w / 2 - 0.08, 0, 0);
+  const discParts = [discGeo.toNonIndexed(), hat.toNonIndexed()];
+  for (const p of discParts) for (const name of Object.keys(p.attributes)) if (name !== 'position' && name !== 'normal') p.deleteAttribute(name);
+  const disc = mergeGeometries(discParts)!;
+  const cal = roundedBox(0.16, 0.08, 0.07, 0.025);
+  cal.rotateY(Math.PI / 2);
+  cal.rotateX(-0.6);
+  cal.translate(w / 2 - 0.1, rimR * 0.55, -rimR * 0.38);
+  for (const name of Object.keys(cal.attributes)) if (name !== 'position' && name !== 'normal') cal.deleteAttribute(name);
+  return { rubber: tyre.toNonIndexed(), chrome, trim, disc, caliper: cal.index ? cal.toNonIndexed() : cal };
 }
 
 // ------------------------------------------------------------------ materials
@@ -527,6 +597,11 @@ function buildWheel(r: number, w: number, multiSpoke: boolean) {
 export interface CarMaterials {
   paint: THREE.MeshPhysicalMaterial;
   glass: THREE.MeshPhysicalMaterial;
+  sideGlass: THREE.MeshPhysicalMaterial;
+  disc: THREE.MeshStandardMaterial;
+  caliper: THREE.MeshStandardMaterial;
+  interior: THREE.MeshStandardMaterial;
+  ao: THREE.MeshBasicMaterial;
   chrome: THREE.MeshStandardMaterial;
   trim: THREE.MeshStandardMaterial;
   rubber: THREE.MeshStandardMaterial;
@@ -537,12 +612,21 @@ export interface CarMaterials {
   under: THREE.MeshStandardMaterial;
 }
 
-export function makeCarMaterials(paintColor: THREE.ColorRepresentation, plateText = 'PK·2048'): CarMaterials {
+export function makeCarMaterials(paintColor: THREE.ColorRepresentation, plateText = 'PK·2048', opts: { seeThrough?: boolean } = {}): CarMaterials {
+  const sideGlass = new THREE.MeshPhysicalMaterial({ color: 0x0e1418, metalness: 0.1, roughness: 0.04, clearcoat: 1, envMapIntensity: 1.6 });
   return {
     paint: new THREE.MeshPhysicalMaterial({
-      color: paintColor, metalness: 0.55, roughness: 0.32, clearcoat: 1, clearcoatRoughness: 0.06,
+      color: paintColor, metalness: 0.6, roughness: 0.28, clearcoat: 1, clearcoatRoughness: 0.04, envMapIntensity: 1.25,
     }),
-    glass: new THREE.MeshPhysicalMaterial({ color: 0x0e1418, metalness: 0.1, roughness: 0.04, clearcoat: 1, envMapIntensity: 1.6 }),
+    // the hero's screens are tinted but see-through so the cabin shows
+    glass: opts.seeThrough
+      ? new THREE.MeshPhysicalMaterial({ color: 0x1b262c, metalness: 0.2, roughness: 0.02, envMapIntensity: 1.8, transparent: true, opacity: 0.42, depthWrite: false })
+      : sideGlass,
+    sideGlass,
+    disc: new THREE.MeshStandardMaterial({ color: 0x8a8d91, metalness: 0.85, roughness: 0.45 }),
+    caliper: new THREE.MeshStandardMaterial({ color: 0xb3261e, metalness: 0.3, roughness: 0.45 }),
+    interior: new THREE.MeshStandardMaterial({ color: 0x3a342e, roughness: 0.85 }),
+    ao: new THREE.MeshBasicMaterial({ map: blobShadowTexture(), transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3 }),
     chrome: new THREE.MeshStandardMaterial({ color: 0xe6e9ee, metalness: 1, roughness: 0.16 }),
     trim: new THREE.MeshStandardMaterial({ color: 0x17191c, metalness: 0.2, roughness: 0.55 }),
     rubber: new THREE.MeshStandardMaterial({ color: 0x141414, metalness: 0, roughness: 0.92 }),
@@ -550,7 +634,7 @@ export function makeCarMaterials(paintColor: THREE.ColorRepresentation, plateTex
     tail: new THREE.MeshStandardMaterial({ color: 0x8a0d10, emissive: 0xff1a1a, emissiveIntensity: 0.35, roughness: 0.25 }),
     amber: new THREE.MeshStandardMaterial({ color: 0xc9780e, emissive: 0xff8c00, emissiveIntensity: 0.15, roughness: 0.3 }),
     plate: new THREE.MeshStandardMaterial({ map: plateTexture(plateText), roughness: 0.5 }),
-    under: new THREE.MeshStandardMaterial({ color: 0x0c0c0d, roughness: 1 }),
+    under: new THREE.MeshStandardMaterial({ color: 0x0c0c0d, roughness: 1, side: THREE.DoubleSide }),
   };
 }
 
@@ -559,27 +643,34 @@ export function carMeshes(parts: CarParts, mats: CarMaterials) {
   const g = new THREE.Group();
   for (const [k, geo] of Object.entries(parts.parts) as [PartKey, THREE.BufferGeometry][]) {
     const mesh = new THREE.Mesh(geo, mats[k]);
-    mesh.castShadow = k !== 'plate' && k !== 'head' && k !== 'tail' && k !== 'amber';
-    mesh.receiveShadow = k === 'paint' || k === 'under';
+    mesh.castShadow = !['plate', 'head', 'tail', 'amber', 'ao', 'glass'].includes(k);
+    mesh.receiveShadow = k === 'paint' || k === 'under' || k === 'interior';
+    if (k === 'ao') mesh.renderOrder = -1;
+    if (k === 'glass') mesh.renderOrder = 2;
     g.add(mesh);
   }
   return g;
 }
 
-/** A wheel object for the player car. */
+/** A wheel object for the player car: rotate the group for steering, `userData.spin` for rolling. */
 export function wheelMesh(parts: CarParts, mats: CarMaterials, side: 1 | -1) {
   const g = new THREE.Group();
   const inner = new THREE.Group();
   inner.scale.x = side;
+  const spin = new THREE.Group();
   for (const [geo, mat] of [
     [parts.wheel.rubber, mats.rubber],
     [parts.wheel.chrome, mats.chrome],
     [parts.wheel.trim, mats.trim],
+    [parts.wheel.disc, mats.disc],
   ] as const) {
     const m = new THREE.Mesh(geo, mat);
     m.castShadow = true;
-    inner.add(m);
+    spin.add(m);
   }
+  const caliper = new THREE.Mesh(parts.wheel.caliper, mats.caliper);
+  inner.add(spin, caliper);
   g.add(inner);
+  g.userData.spin = spin;
   return g;
 }

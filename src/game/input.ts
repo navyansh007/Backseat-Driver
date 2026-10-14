@@ -48,7 +48,9 @@ export class Controls {
       const s = this.link.state;
       const curve = (v: number) => Math.sign(v) * Math.pow(Math.abs(v), 1.35);
       this.smoothSteer += (curve(s.x) - this.smoothSteer) * Math.min(1, dt * 18);
-      this.smoothThrottle += (s.y - this.smoothThrottle) * Math.min(1, dt * 14);
+      // flipping between forward and back (brake/reverse) applies instantly; same-direction changes are smoothed
+      if (Math.sign(s.y) !== Math.sign(this.smoothThrottle) && s.y !== 0) this.smoothThrottle = s.y;
+      else this.smoothThrottle += (s.y - this.smoothThrottle) * Math.min(1, dt * 20);
       steer = this.smoothSteer;
       throttle = this.smoothThrottle;
     } else {

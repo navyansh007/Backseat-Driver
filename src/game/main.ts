@@ -10,6 +10,7 @@ import { SkidMarks, Smoke } from './effects';
 import { CarAudio } from './audio';
 import { RemoteLink } from './net';
 import { Controls } from './input';
+import { MusicDirector } from './music';
 import { CombatFx } from './combat/fx';
 import { Destruction } from './combat/destruction';
 import { Weapons } from './combat/weapons';
@@ -73,6 +74,8 @@ async function boot() {
   const smoke = new Smoke(scene);
   const audio = new CarAudio();
   const controls = new Controls(link);
+  const music = new MusicDirector();
+  audio.onReady((ctx, bus) => music.attach(ctx, bus));
 
   // ------------------------------------------------------------ combat
   const fx = new CombatFx(scene);
@@ -83,7 +86,6 @@ async function boot() {
       const k = Math.max(0, 1 - dist / 60) * scale;
       cam.bump(k * 0.9);
       if (k > 0.05) link.send({ t: 'hit', power: Math.min(1, k) });
-      life.panic(p, 35);
     },
     onTrafficDestroyed: (body) => life.trafficDestroyed(body),
     onTrafficRespawn: (body) => life.trafficRespawn(body),
@@ -175,6 +177,7 @@ async function boot() {
       case 'KeyC': if (playing) cam.cycle(); break;
       case 'KeyR': resetCar(); break;
       case 'KeyM': toast(audio.toggleMute() ? 'sound off' : 'sound on', 1200); break;
+      case 'KeyB': toast(music.toggle() ? 'music on' : 'music off', 1200); break;
       case 'KeyV': cycleAssist(); break;
       case 'KeyQ': playing ? showMenu() : start(); break;
       case 'KeyH': hintsOn = !hintsOn; ui.hints.classList.toggle('hidden', !hintsOn); break;
@@ -201,6 +204,7 @@ async function boot() {
   let acc = 0;
   let last = performance.now();
   let flippedFor = 0;
+  let musicStarted = false;
   let teleT = 0;
   let input = { steer: 0, throttle: 0, handbrake: false };
   const tmp = new THREE.Vector3();
@@ -283,6 +287,11 @@ async function boot() {
     }
     smoke.update(dt);
     audio.update(dt, speed, Math.max(0, Math.abs(input.throttle)), slipTotal, car.sim.reversing);
+    // soundtrack: starts with the player's first real movement (intro, then the loop)
+    if (!musicStarted && playing && (Math.abs(input.throttle) > 0.08 || speed > 0.8)) {
+      musicStarted = true;
+      music.begin();
+    }
 
     // ---------------------------------------------------- recovery
     if (car.sim.upright() < 0.35) {
@@ -336,7 +345,7 @@ async function boot() {
   requestAnimationFrame(frame);
 
   // debug handle for development
-  (window as unknown as { game: unknown }).game = { car, cam, phys, link, renderer, scene, start, weapons, destruction, controls, tick };
+  (window as unknown as { game: unknown }).game = { car, cam, phys, link, renderer, scene, start, weapons, destruction, controls, tick, music };
 }
 
 boot().catch((err) => {

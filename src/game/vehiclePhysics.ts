@@ -21,11 +21,13 @@ export const TUNING = {
   frictionRearHandbrake: 0.75,
   sideStiffness: 1.0,
   engineForce: 5400, // per driven wheel
-  reverseForce: 2200,
+  reverseForce: 4400,
   topSpeed: 36, // m/s ≈ 130 km/h
-  reverseTopSpeed: 9,
-  brake: 52, // per wheel
-  coastBrake: 2.2,
+  reverseTopSpeed: 14,
+  brake: 95, // per wheel
+  /** below this speed (m/s) pulling back goes straight into reverse instead of braking */
+  reverseSwitch: 2.0,
+  coastBrake: 3.2,
   maxSteer: 0.62,
   highSpeedSteer: 0.16,
   steerRate: 3.2,
@@ -155,17 +157,19 @@ export class VehicleSim {
     let brake = 0;
     const th = input.throttle;
     this.braking = false;
+    // partial pulls still brake firmly: touchpad users rarely pull all the way
+    const brakeCurve = (v: number) => Math.min(1, v * 1.8);
     if (th > 0.02) {
-      if (speed < -0.8) {
-        brake = T.brake * th;
+      if (speed < -T.reverseSwitch) {
+        brake = T.brake * brakeCurve(th);
         this.braking = true;
       } else {
         engine = T.engineForce * th * Math.max(0, 1 - Math.max(0, speed) / T.topSpeed) * help.traction;
         this.reversing = false;
       }
     } else if (th < -0.02) {
-      if (speed > 0.8) {
-        brake = T.brake * -th;
+      if (speed > T.reverseSwitch) {
+        brake = T.brake * brakeCurve(-th);
         this.braking = true;
       } else {
         engine = -T.reverseForce * -th * Math.max(0, 1 - Math.max(0, -speed) / T.reverseTopSpeed);

@@ -40,7 +40,7 @@ export class ParkedCars {
         geometry: geo,
         material: mats[k],
         tinted: k === 'paint',
-        castShadow: k !== 'plate' && k !== 'head' && k !== 'tail' && k !== 'amber',
+        castShadow: !['plate', 'head', 'tail', 'amber', 'ao'].includes(k),
         receiveShadow: k === 'paint',
       }));
       const set = new InstancedBodies(parts, capacity).addTo(parent);

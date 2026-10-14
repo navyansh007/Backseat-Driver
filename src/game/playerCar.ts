@@ -20,8 +20,8 @@ export class PlayerCar {
 
   constructor(world: RAPIER.World, scene: THREE.Scene, spawn: { x: number; y: number; z: number; yaw: number }) {
     const spec = SPECS.executive;
-    const parts = buildCar(spec, { includeWheels: false });
-    this.mats = makeCarMaterials(0x5b636c, spec.plate);
+    const parts = buildCar(spec, { includeWheels: false, interior: true });
+    this.mats = makeCarMaterials(0x5b636c, spec.plate, { seeThrough: true });
     const body = carMeshes(parts, this.mats);
     body.position.y = -TUNING.rideHeight;
     this.root.add(body);
@@ -81,7 +81,7 @@ export class PlayerCar {
       const w = this.wheels[i];
       w.position.set(c.x, c.y - len, c.z);
       w.rotation.y = vc.wheelSteering(i) ?? 0;
-      w.rotation.x = vc.wheelRotation(i) ?? 0;
+      (w.userData.spin as THREE.Object3D).rotation.x = vc.wheelRotation(i) ?? 0;
     }
     const target = this.sim.braking ? 1 : 0;
     this.brakeGlow += (target - this.brakeGlow) * Math.min(1, dt * 14);

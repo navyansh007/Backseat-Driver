@@ -45,14 +45,9 @@ class Loop {
 }
 
 interface TrafficCar { body: RAPIER.RigidBody; lane: Loop; s: number; v: number; vmax: number; dead: boolean }
-interface Walker { s: number; dir: number; v: number; phase: number; lane: Loop; offset: number; panic: number }
 
 export class Life {
   private traffic: TrafficCar[] = [];
-  private walkers: Walker[] = [];
-  private torso: THREE.InstancedMesh;
-  private head: THREE.InstancedMesh;
-  private legs: THREE.InstancedMesh;
   private birdL: THREE.InstancedMesh;
   private birdR: THREE.InstancedMesh;
   private birds: { a: number; r: number; h: number; speed: number; flap: number }[] = [];
@@ -83,41 +78,6 @@ export class Life {
         this.traffic.push({ body, lane, s, v: vmax, vmax, dead: false });
       }
     });
-
-    // --------------------------------------------------------- people
-    const walkLane = new Loop(ROAD.x + ROAD.width / 2 + 1.5, ROAD.z + ROAD.width / 2 + 1.5, 4, false);
-    const N = 34;
-    for (let i = 0; i < N; i++) {
-      this.walkers.push({ s: rand() * walkLane.length, dir: rand() < 0.5 ? 1 : -1, v: 1.1 + rand() * 0.5, phase: rand() * 10, lane: walkLane, offset: (rand() - 0.5) * 1.6, panic: 0 });
-    }
-    const torsoGeo = new THREE.CapsuleGeometry(0.2, 0.42, 4, 8);
-    torsoGeo.translate(0, 1.18, 0);
-    const armGeoL = new THREE.CapsuleGeometry(0.06, 0.5, 3, 6).translate(0.27, 1.12, 0);
-    const armGeoR = new THREE.CapsuleGeometry(0.06, 0.5, 3, 6).translate(-0.27, 1.12, 0);
-    const torsoAll = mergeSimple([torsoGeo, armGeoL, armGeoR]);
-    const headGeo = new THREE.SphereGeometry(0.13, 10, 8).translate(0, 1.68, 0);
-    const legGeo = new THREE.CapsuleGeometry(0.08, 0.66, 3, 6).translate(0, -0.42, 0);
-    const mat = new THREE.MeshStandardMaterial({ roughness: 0.8 });
-    this.torso = new THREE.InstancedMesh(torsoAll, mat, N);
-    this.head = new THREE.InstancedMesh(headGeo, mat, N);
-    this.legs = new THREE.InstancedMesh(legGeo, mat, N * 2);
-    const shirts = [0xe85d4a, 0x4a7fe8, 0xf2c230, 0x2f8f8a, 0xffffff, 0x8e5bd6, 0x333333, 0xf28ab2];
-    const skins = [0xf1c8a5, 0xd9a47e, 0xa8714f, 0x6f4a33, 0xe8b894];
-    const pants = [0x2b3a55, 0x3b3b3b, 0x6b5b45, 0x1f2a44, 0x8a8f99];
-    const c = new THREE.Color();
-    for (let i = 0; i < N; i++) {
-      this.torso.setColorAt(i, c.set(shirts[(rand() * shirts.length) | 0]));
-      this.head.setColorAt(i, c.set(skins[(rand() * skins.length) | 0]));
-      const p = pants[(rand() * pants.length) | 0];
-      this.legs.setColorAt(i * 2, c.set(p));
-      this.legs.setColorAt(i * 2 + 1, c.set(p));
-    }
-    for (const im of [this.torso, this.head, this.legs]) {
-      im.castShadow = true;
-      im.frustumCulled = false;
-      im.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-      scene.add(im);
-    }
 
     // --------------------------------------------------------- birds
     const wing = new THREE.BufferGeometry();
@@ -173,18 +133,6 @@ export class Life {
     body.setRotation(this.q.setFromAxisAngle(UP, yaw), true);
   }
 
-  /** People near an explosion run away from it for a while. */
-  panic(p: THREE.Vector3, radius: number) {
-    for (const w of this.walkers) {
-      const yaw = w.lane.sample(w.s, this.tmp);
-      if (this.tmp.distanceTo(p) > radius) continue;
-      // run along the sidewalk, away from the blast
-      const ahead = (p.x - this.tmp.x) * Math.sin(yaw) + (p.z - this.tmp.z) * Math.cos(yaw);
-      w.dir = ahead > 0 ? -1 : 1;
-      w.panic = 6;
-    }
-  }
-
   update(dt: number, player: THREE.Vector3) {
     this.time += dt;
     const t = this.time;
@@ -221,42 +169,6 @@ export class Life {
       car.body.setNextKinematicRotation(this.q);
     }
 
-    // pedestrians
-    this.walkers.forEach((w, i) => {
-      w.panic = Math.max(0, w.panic - dt);
-      const speed = w.panic > 0 ? 4.2 : w.v;
-      w.s += speed * w.dir * dt;
-      const yaw = w.lane.sample(w.s, this.tmp) + (w.dir < 0 ? Math.PI : 0);
-      // sideways offset across the sidewalk
-      this.tmp.x += Math.cos(yaw) * w.offset;
-      this.tmp.z -= Math.sin(yaw) * w.offset;
-      // step aside if the car comes close
-      const dx = this.tmp.x - player.x, dz = this.tmp.z - player.z;
-      const d = Math.hypot(dx, dz);
-      if (d < 4) {
-        this.tmp.x += (dx / d) * (4 - d);
-        this.tmp.z += (dz / d) * (4 - d);
-      }
-      const cyc = t * speed * (w.panic > 0 ? 2.2 : 3.2) + w.phase;
-      const bob = Math.abs(Math.sin(cyc)) * 0.05;
-      this.q.setFromAxisAngle(UP, yaw);
-      this.m.compose(this.tmp.clone().setY(0.12 + bob), this.q, ONE);
-      this.torso.setMatrixAt(i, this.m);
-      this.head.setMatrixAt(i, this.m);
-      for (const side of [0, 1]) {
-        const swing = Math.sin(cyc + side * Math.PI) * 0.5;
-        const leg = new THREE.Matrix4().compose(
-          new THREE.Vector3((side ? -0.1 : 0.1), 0.94, 0),
-          new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), swing),
-          ONE,
-        );
-        this.legs.setMatrixAt(i * 2 + side, leg.premultiply(this.m));
-      }
-    });
-    this.torso.instanceMatrix.needsUpdate = true;
-    this.head.instanceMatrix.needsUpdate = true;
-    this.legs.instanceMatrix.needsUpdate = true;
-
     // birds circling over the car park
     const cx = Math.sin(t * 0.03) * 40, cz = -10 + Math.cos(t * 0.025) * 40;
     this.birds.forEach((b, i) => {
@@ -287,19 +199,5 @@ export class Life {
 }
 
 const UP = new THREE.Vector3(0, 1, 0);
-const ONE = new THREE.Vector3(1, 1, 1);
 const IDQ = new THREE.Quaternion();
 const BIRD_SCALE = new THREE.Vector3(1.4, 1.4, 1.4);
-
-function mergeSimple(list: THREE.BufferGeometry[]) {
-  const pos: number[] = [], nor: number[] = [];
-  for (const g of list) {
-    const ng = g.index ? g.toNonIndexed() : g;
-    pos.push(...(ng.attributes.position.array as Float32Array));
-    nor.push(...(ng.attributes.normal.array as Float32Array));
-  }
-  const out = new THREE.BufferGeometry();
-  out.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-  out.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
-  return out;
-}

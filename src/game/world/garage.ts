@@ -6,7 +6,7 @@ import { CAR_COLORS } from './dynamics';
 import { concreteTexture, rng, signTexture } from './textures';
 
 /** Garage centre in world space and level heights. */
-export const GARAGE = { x: 0, z: -45, halfX: 30, halfZ: 18, level: 4, slab: 0.3 };
+export const GARAGE = { x: 0, z: -45, halfX: 30, halfZ: 18, level: 5, slab: 0.3 };
 
 export interface Materials {
   concrete: THREE.MeshStandardMaterial;
@@ -111,11 +111,11 @@ export function buildGarage(
     wall(-30, 18, 30, 18, y, 1.05, mats.concrete);
     // east
     wall(30, -18, 30, 18, y, 1.05, mats.concrete);
-    // west — the roof has a gap (z 8..15) facing the showroom
+    // west — the roof has a gap (z 5..16) facing the showroom
     if (y === LV) wall(-30, -18, -30, 18, y, 1.05, mats.concrete);
     else {
-      wall(-30, -18, -30, 8, y, 1.05, mats.concrete);
-      wall(-30, 15, -30, 18, y, 1.05, mats.concrete);
+      wall(-30, -18, -30, 5, y, 1.05, mats.concrete);
+      wall(-30, 16, -30, 18, y, 1.05, mats.concrete);
     }
     // teal band along the facade
     for (const [x0, z0, x1, z1] of [[-30, -18.14, 30, -18.14], [-30, 18.14, 30, 18.14], [30.14, -18, 30.14, 18]] as const) {
@@ -126,14 +126,14 @@ export function buildGarage(
     }
   }
   // hazard stripes around the roof gap
-  for (let i = 0; i < 7; i++) {
-    batch.box({ x: W(-29.6), y: LV * 2 + 0.01, z: Z(8.5 + i) }, { x: 0.8, y: 0.02, z: 0.5 }, i % 2 ? mats.dark : mats.paintYellow, undefined, false);
+  for (let i = 0; i < 11; i++) {
+    batch.box({ x: W(-29.6), y: LV * 2 + 0.01, z: Z(5.5 + i) }, { x: 0.8, y: 0.02, z: 0.5 }, i % 2 ? mats.dark : mats.paintYellow, undefined, false);
   }
 
   // ---------------------------------------------------------------- pillars
   const pillarXs = [-20, -10, 0, 10, 20];
   for (const px of pillarXs) {
-    for (const pz of [-12.2, 0, 12.2]) {
+    for (const pz of [-12.2, 12.2]) { // no centre pillar line: wide open decks
       solid(px, LV, pz, 0.6, LV * 2, 0.6, mats.concrete);
       // yellow/black guard at the bottom of each level
       for (const y of [0, LV]) batch.box({ x: W(px), y: y + 0.4, z: Z(pz) }, { x: 0.64, y: 0.8, z: 0.64 }, mats.paintYellow, undefined, false);
@@ -148,8 +148,8 @@ export function buildGarage(
   solid(-29.8, LV / 2, 8, 0.5, LV, 0.5, mats.concrete);
 
   // stair tower
-  solid(-33, 6, 15, 6, 12, 6, mats.concreteDark);
-  batch.box({ x: W(-33), y: 12.1, z: Z(15) }, { x: 6.4, y: 0.25, z: 6.4 }, mats.paintTeal);
+  solid(-33, LV + 1, 15, 6, LV * 2 + 2, 6, mats.concreteDark);
+  batch.box({ x: W(-33), y: LV * 2 + 2.1, z: Z(15) }, { x: 6.4, y: 0.25, z: 6.4 }, mats.paintTeal);
 
   // ----------------------------------------------------------- ceiling lights
   for (const y of [LV - slab - 0.06, LV * 2 - slab - 0.06]) {
@@ -166,7 +166,7 @@ export function buildGarage(
   const levels = [0, LV, LV * 2];
   for (const y of levels) {
     const rows: { z0: number; dir: 1 | -1 }[] = [
-      { z0: -18, dir: 1 }, { z0: 18, dir: -1 }, { z0: 0, dir: 1 }, { z0: 0, dir: -1 },
+      { z0: -18, dir: 1 }, { z0: 18, dir: -1 },
     ];
     for (const row of rows) {
       for (let x = -20 + stallW / 2; x < 20; x += stallW) {
@@ -174,7 +174,7 @@ export function buildGarage(
         const zc = row.z0 + row.dir * depth / 2;
         paintLine(W(x - stallW / 2), y + 0.012, Z(zc), 0.1, depth);
         const nearPillar = pillarXs.some((px) => Math.abs(px - x) < 1.45);
-        if (!nearPillar && rand() < (y === 0 ? 0.55 : y === LV ? 0.45 : 0.3)) {
+        if (!nearPillar && rand() < (y === 0 ? 0.4 : y === LV ? 0.3 : 0.2)) {
           const kinds = ['sedan', 'sedan', 'hatch', 'suv', 'executive', 'van'];
           const kind = kinds[(rand() * kinds.length) | 0];
           const yaw = row.dir === 1 ? Math.PI : 0;
@@ -187,7 +187,8 @@ export function buildGarage(
   }
 
   // cones lining the gap and some bins
-  for (let i = 0; i < 4; i++) props.add('cone', W(-27 + i * 0.1), LV * 2, Z(7.5 + i * 2.6));
+  // cones mark the edges of the roof gap, leaving the run-up clear
+  for (const [cx, cz] of [[-28.6, 4.3], [-27.2, 4.3], [-28.6, 16.7], [-27.2, 16.7]]) props.add('cone', W(cx), LV * 2, Z(cz));
   props.add('barrel', W(-26), LV * 2, Z(16.5));
   props.add('barrelBlue', W(-25.2), LV * 2, Z(16.8));
   props.add('bin', W(25), 0, Z(-16.8));
@@ -201,11 +202,11 @@ export function buildGarage(
     m.rotation.y = yaw;
     scene.add(m);
   };
-  sign('P', undefined, 0, 9.6, 18.3, 2.4, 2.4, 0, '#1d4f91');
-  sign('CENTRAL CAR PARK', 'open 24 hours', 0, 7.0, 18.31, 9, 1.6, 0);
-  sign('LEVEL 1', undefined, -10, LV + 2.6, 0.32, 3, 0.6, 0, '#f2c230', '#1a1a1a');
+  sign('P', undefined, 0, LV * 2 + 1.6, 18.3, 2.4, 2.4, 0, '#1d4f91');
+  sign('CENTRAL CAR PARK', 'open 24 hours', 0, LV + 3.0, 18.31, 9, 1.6, 0);
+  sign('LEVEL 1', undefined, -10, LV + 2.6, 11.88, 3, 0.6, Math.PI, '#f2c230', '#1a1a1a'); // on a pillar, facing the open deck
   sign('ROOF', undefined, -10, LV * 2 + 2.6, 0.32, 3, 0.6, 0, '#f2c230', '#1a1a1a');
-  sign('UP ▲', undefined, 25.5, 3.0, -12.5, 3, 0.7, Math.PI, '#f2c230', '#1a1a1a');
+  sign('UP ▲', undefined, 25.5, LV - 1.0, -12.5, 3, 0.7, Math.PI, '#f2c230', '#1a1a1a');
   // roof sign post
   const postGeo = new THREE.CylinderGeometry(0.06, 0.06, 2.4, 8);
   batch.add(postGeo, mats.metal, new THREE.Matrix4().makeTranslation(W(-10), LV * 2 + 1.2, Z(0.3)));
