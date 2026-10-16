@@ -50,6 +50,14 @@ export class Physics {
     return body;
   }
 
+  /** Static convex hull through world-space points (ramps, kickers). */
+  staticHull(points: THREE.Vector3Like[], friction = 0.9) {
+    const flat = new Float32Array(points.flatMap((p) => [p.x, p.y, p.z]));
+    const desc = RAPIER.ColliderDesc.convexHull(flat);
+    if (!desc) throw new Error('degenerate hull');
+    return this.world.createCollider(desc.setFriction(friction).setCollisionGroups(groups(G.WORLD, 0xffff)));
+  }
+
   staticCylinder(center: THREE.Vector3Like, halfHeight: number, radius: number) {
     const body = this.fixed(center);
     this.world.createCollider(

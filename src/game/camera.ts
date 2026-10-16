@@ -33,6 +33,7 @@ export class ChaseCamera {
   snap(target: THREE.Object3D) {
     this.yaw = headingOf(target);
     this.pos.copy(target.position).add(new THREE.Vector3(-Math.sin(this.yaw) * 7, 3, -Math.cos(this.yaw) * 7));
+    this.look.copy(target.position);
   }
 
   update(dt: number, target: THREE.Object3D, speed: number) {

@@ -88,7 +88,7 @@ const remoteUrl = `${publicUrl}/remote.html?room=${room}`;
 const qr = await QRCode.toString(remoteUrl, { type: 'terminal', small: true });
 
 console.log(`
-${bold('  tnd car chase · public session')}  ${dim(`room ${room}`)}
+${bold('  backseat driver · public session')}  ${dim(`room ${room}`)}
 
   game (this computer)  ${cyan(localGameUrl)}
   game (public)         ${cyan(gameUrl)}

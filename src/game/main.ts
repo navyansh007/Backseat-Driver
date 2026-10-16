@@ -14,6 +14,7 @@ import { MusicDirector } from './music';
 import { CombatFx } from './combat/fx';
 import { Destruction } from './combat/destruction';
 import { Weapons } from './combat/weapons';
+import { StuntDirector } from './stunts';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const ui = {
@@ -22,6 +23,8 @@ const ui = {
   soundNote: $('sound-note'), toast: $('toast'), qr: $<HTMLCanvasElement>('qr'), qrUrl: $<HTMLAnchorElement>('qr-url'),
   room: $('room-code'), qrDot: $('qr-dot'), qrStatus: $('qr-status'), kbStart: $('kb-start'),
   lock: $('lock'), heat: $('heat-fill'), heatBox: $('heat'), pips: $('pips'),
+  letterbox: $('letterbox'), card: $('stunt-card'), cardTitle: $('stunt-title'), cardTags: $('stunt-tags'),
+  cardStats: $('stunt-stats'), cardPoints: $('stunt-points'),
 };
 
 let toastTimer = 0;
@@ -115,6 +118,13 @@ async function boot() {
     launch: () => audio.launch(),
   });
 
+  // stunts: slow-motion cinematics with their own score
+  const glass = lot.props.entries.filter((e) => e.kind === 'glass').map((e) => e.body);
+  const stunts = new StuntDirector(phys, car, lot.features, cam.camera, music, audio, {
+    letterbox: ui.letterbox, card: ui.card, title: ui.cardTitle, tags: ui.cardTags, stats: ui.cardStats, points: ui.cardPoints,
+    hide: [ui.hud],
+  }, glass);
+
   // settle props/cars before showing anything
   for (let i = 0; i < 30; i++) {
     car.drive(1 / 60, { steer: 0, throttle: 0, handbrake: false });
@@ -139,6 +149,7 @@ async function boot() {
     cam.snap(car.root);
   };
   const showMenu = () => {
+    stunts.cancel();
     playing = false;
     ui.title.classList.remove('hidden');
     ui.hud.classList.add('hidden');
@@ -179,6 +190,11 @@ async function boot() {
       case 'KeyM': toast(audio.toggleMute() ? 'sound off' : 'sound on', 1200); break;
       case 'KeyB': toast(music.toggle() ? 'music on' : 'music off', 1200); break;
       case 'KeyV': cycleAssist(); break;
+      case 'KeyK':
+        stunts.enabled = !stunts.enabled;
+        if (!stunts.enabled) stunts.cancel();
+        toast(stunts.enabled ? 'stunt cam on' : 'stunt cam off', 1400);
+        break;
       case 'KeyQ': playing ? showMenu() : start(); break;
       case 'KeyH': hintsOn = !hintsOn; ui.hints.classList.toggle('hidden', !hintsOn); break;
       case 'KeyF': case 'KeyG':
@@ -193,6 +209,7 @@ async function boot() {
   });
 
   const resetCar = (toSpawn = false) => {
+    stunts.cancel();
     const p = car.body.translation();
     if (toSpawn) car.reset(lot.spawn.x, lot.spawn.y, lot.spawn.z, lot.spawn.yaw);
     else car.reset(p.x, Math.max(0, p.y - 0.6), p.z, car.sim.yaw());
@@ -229,12 +246,15 @@ async function boot() {
     if (!playing && controls.source === 'phone' && link.state.active) start();
     if (!playing) input = { steer: 0, throttle: 0, handbrake: true };
 
-    acc += dt;
+    // game time runs slower during a stunt; the camera and audio keep real time
+    const gdt = dt * stunts.timeScale;
+    acc += gdt;
     let steps = 0;
     while (acc >= STEP && steps < 5) {
       car.drive(STEP, input);
       phys.step();
       car.capture();
+      stunts.postStep(STEP, playing);
       acc -= STEP;
       steps++;
       phys.events.drainContactForceEvents((ev) => {
@@ -252,9 +272,9 @@ async function boot() {
 
     phys.sync();
     car.render(acc / STEP, dt);
-    lot.update(dt, car.position);
-    life.update(dt, car.position);
-    weapons.update(dt, controls.weapons, playing);
+    lot.update(gdt, car.position);
+    life.update(gdt, car.position);
+    weapons.update(gdt, controls.weapons, playing);
 
     // ---------------------------------------------------- tyres: skids & smoke
     const speed = Math.abs(car.sim.forwardSpeed());
@@ -285,7 +305,7 @@ async function boot() {
       skids.add(i, slip > 0.12 ? tmp : null, axle, slip);
       if (slip > 0.3 && Math.random() < slip * 0.9) smoke.emit(tmp, vel, slip);
     }
-    smoke.update(dt);
+    smoke.update(gdt);
     audio.update(dt, speed, Math.max(0, Math.abs(input.throttle)), slipTotal, car.sim.reversing);
     // soundtrack: starts with the player's first real movement (intro, then the loop)
     if (!musicStarted && playing && (Math.abs(input.throttle) > 0.08 || speed > 0.8)) {
@@ -294,8 +314,8 @@ async function boot() {
     }
 
     // ---------------------------------------------------- recovery
-    if (car.sim.upright() < 0.35) {
-      flippedFor += dt;
+    if (car.sim.upright() < 0.35 && !stunts.active) {
+      flippedFor += gdt;
       if (flippedFor > 2.2) {
         resetCar();
         toast('car righted');
@@ -315,9 +335,15 @@ async function boot() {
       link.send({ t: 'tele', kmh, gear, msl: weapons.missiles, heat: +weapons.heat.toFixed(2), hot: weapons.overheated, lock: !!weapons.lock });
     }
 
-    cam.update(dt, car.root, speed);
-    destruction.update(dt, cam.camera, car.position);
-    fx.update(dt);
+    // during a stunt the director drives the camera; cut straight back to the chase cam after
+    const wasCine = stunts.active;
+    stunts.update(dt, car.root);
+    if (!stunts.active) {
+      if (wasCine) cam.snap(car.root);
+      cam.update(dt, car.root, speed);
+    }
+    destruction.update(gdt, cam.camera, car.position);
+    fx.update(gdt);
     updateCombatHud();
     env.follow(car.position);
     renderer.render(scene, cam.camera);
@@ -345,7 +371,7 @@ async function boot() {
   requestAnimationFrame(frame);
 
   // debug handle for development
-  (window as unknown as { game: unknown }).game = { car, cam, phys, link, renderer, scene, start, weapons, destruction, controls, tick, music };
+  (window as unknown as { game: unknown }).game = { car, cam, phys, link, renderer, scene, start, weapons, destruction, controls, tick, music, stunts, lot };
 }
 
 boot().catch((err) => {

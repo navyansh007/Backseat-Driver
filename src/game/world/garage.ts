@@ -3,10 +3,22 @@ import type { Physics } from '../physics';
 import type { StaticBatch } from './batch';
 import type { ParkedCars, Props } from './dynamics';
 import { CAR_COLORS } from './dynamics';
+import { feature, hazardMaterial, solidHull, wedge, type StuntFeature } from './stuntPark';
 import { concreteTexture, rng, signTexture } from './textures';
 
-/** Garage centre in world space and level heights. */
-export const GARAGE = { x: 0, z: -45, halfX: 30, halfZ: 18, level: 5, slab: 0.3 };
+/**
+ * The multi-storey car park, in its own frame: x ∈ [-48, 48], z ∈ [-26, 26],
+ * ground + two covered decks + an open roof, 5.5 m apart.
+ *
+ * Each deck is three bays: back (z < -14), a 28 m wide pillar-free centre, and front (z > 14).
+ * Three solid 11 m wide ramps scissor up the east half of the side bays:
+ *   R1 ground → L1 (back bay, rising east), R2 L1 → L2 (front bay, rising west),
+ *   R3 L2 → roof (back bay, rising east).
+ */
+export const GARAGE = { x: 18, z: -52, halfX: 48, halfZ: 26, level: 5.5, slab: 0.35 };
+
+/** The rental showroom across the street from the roof gap (world space). */
+export const SHOWROOM = { x0: -106, x1: -92, z0: -63, z1: -41, h: 6.6 };
 
 export interface Materials {
   concrete: THREE.MeshStandardMaterial;
@@ -35,6 +47,12 @@ export function makeMaterials(): Materials {
 }
 
 type Rect = [x0: number, x1: number, z0: number, z1: number];
+type Bay = 'back' | 'front';
+
+const HX = GARAGE.halfX, HZ = GARAGE.halfZ;
+const BAY = 14; // |z| where the side bays begin
+const RAMP_X: [number, number] = [4, 34];
+const RAMP_W = 11.2;
 
 export function buildGarage(
   scene: THREE.Scene,
@@ -44,11 +62,14 @@ export function buildGarage(
   parked: ParkedCars,
   props: Props,
   paintLine: (x: number, y: number, z: number, w: number, l: number, yaw?: number) => void,
-) {
+): StuntFeature[] {
   const { x: GX, z: GZ, level: LV, slab } = GARAGE;
   const rand = rng(404);
   const W = (x: number) => GX + x;
   const Z = (z: number) => GZ + z;
+  const V = (x: number, y: number, z: number) => new THREE.Vector3(W(x), y, Z(z));
+  const decks = [LV, LV * 2, LV * 3];
+  const ROOF = LV * 3;
 
   // solid = visual + collider
   const solid = (cx: number, cy: number, cz: number, sx: number, sy: number, sz: number, mat: THREE.Material, rot?: THREE.Quaternion, shadow = true) => {
@@ -57,142 +78,160 @@ export function buildGarage(
   };
   const slabRect = (r: Rect, top: number) =>
     solid((r[0] + r[1]) / 2, top - slab / 2, (r[2] + r[3]) / 2, r[1] - r[0], slab, r[3] - r[2], mats.concrete);
-
-  // ----------------------------------------------------------- floor slabs
-  const l1: Rect[] = [[-30, 21.5, -18, 18], [21.5, 30, -18, -2], [21.5, 30, 10, 18]];
-  const roof: Rect[] = [[-21.5, 30, -18, 18], [-30, -21.5, 2, 18], [-30, -21.5, -18, -10]];
-  l1.forEach((r) => slabRect(r, LV));
-  roof.forEach((r) => slabRect(r, LV * 2));
-
-  // ----------------------------------------------------------------- ramps
-  const rampLen = 20;
-  const theta = Math.atan2(LV, rampLen);
-  const slope = Math.hypot(LV, rampLen);
-  const ramp = (cx: number, baseY: number, dir: 1 | -1) => {
-    const a = -dir * theta;
-    const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), a);
-    const n = new THREE.Vector3(0, 1, 0).applyQuaternion(q);
-    const midY = baseY + LV / 2;
-    const c = new THREE.Vector3(cx, midY, 0).addScaledVector(n, -slab / 2);
-    solid(c.x, c.y, c.z, 7, slab, slope, mats.concreteDark, q);
-    // side curbs on the ramp
-    for (const s of [-1, 1]) {
-      const cc = new THREE.Vector3(cx + s * 3.6, midY, 0).addScaledVector(n, 0.25);
-      solid(cc.x, cc.y, cc.z, 0.25, 0.5, slope, mats.paintYellow, q);
-    }
-    // painted chevrons up the ramp
-    for (let i = -8; i <= 8; i += 4) {
-      const y = midY + (i / rampLen) * LV * dir + 0.02;
-      paintLine(W(cx), y, Z(i), 0.25, 2.2, 0.6);
-      paintLine(W(cx), y, Z(i), 0.25, 2.2, -0.6);
-    }
-  };
-  ramp(25.5, 0, 1); // ground → L1, rising toward +z
-  ramp(-25.5, LV, -1); // L1 → roof, rising toward −z
-
-  // safety walls next to the ramps/openings
-  const wall = (x0: number, z0: number, x1: number, z1: number, y: number, h = 1.0, mat: THREE.Material = mats.concrete) => {
+  const wall = (x0: number, z0: number, x1: number, z1: number, y: number, h = 1.05, mat: THREE.Material = mats.concrete, t = 0.25) => {
     const len = Math.hypot(x1 - x0, z1 - z0);
     const yaw = Math.atan2(x1 - x0, z1 - z0);
     const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw);
-    solid((x0 + x1) / 2, y + h / 2, (z0 + z1) / 2, 0.25, h, len, mat, q);
+    solid((x0 + x1) / 2, y + h / 2, (z0 + z1) / 2, t, h, len, mat, q);
   };
-  wall(21.5, -2, 21.5, 10, LV); // L1 opening, west side
-  wall(21.5, -2, 30, -2, LV); // L1 opening, south side
-  wall(21.4, -8, 21.4, 10, 0, 0.9, mats.paintYellow); // ground beside ramp
-  wall(-21.5, -10, -21.5, 2, LV * 2); // roof opening
-  wall(-30, 2, -21.5, 2, LV * 2);
-  wall(-21.4, -10, -21.4, 8, LV, 0.9, mats.paintYellow); // L1 beside ramp
+  const bayZ = (bay: Bay): [number, number] => (bay === 'back' ? [-HZ, -BAY] : [BAY, HZ]);
+
+  // ----------------------------------------------------------- floor slabs
+  // each deck has one hole over the ramp that climbs up to it
+  const holes: Bay[] = ['back', 'front', 'back'];
+  decks.forEach((y, i) => {
+    const [hz0, hz1] = bayZ(holes[i]);
+    slabRect([-HX, RAMP_X[0], -HZ, HZ], y);
+    slabRect([RAMP_X[1], HX, -HZ, HZ], y);
+    slabRect(holes[i] === 'back' ? [RAMP_X[0], RAMP_X[1], hz1, HZ] : [RAMP_X[0], RAMP_X[1], -HZ, hz0], y);
+  });
+
+  // ----------------------------------------------------------------- ramps
+  const rampLen = RAMP_X[1] - RAMP_X[0];
+  const theta = Math.atan2(LV, rampLen);
+  const ramp = (bay: Bay, base: number, dir: 1 | -1) => {
+    const zc = bay === 'back' ? -20 : 20;
+    const [lowX, highX] = dir === 1 ? RAMP_X : [RAMP_X[1], RAMP_X[0]];
+    wedge(batch, phys, mats.concreteDark, { x: W(lowX), z: Z(zc) }, { x: W(highX), z: Z(zc) }, RAMP_W, LV, base);
+    // parapets either side, following the slope
+    const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), dir * theta);
+    const slope = Math.hypot(LV, rampLen);
+    const midX = (RAMP_X[0] + RAMP_X[1]) / 2;
+    for (const s of [-1, 1]) solid(midX, base + LV / 2 + 0.5, zc + s * (RAMP_W / 2 + 0.15), slope, 1.0, 0.3, mats.concrete, q);
+    // yellow chevrons pointing uphill
+    for (let k = 0.15; k < 0.95; k += 0.16) {
+      const x = lowX + (highX - lowX) * k;
+      const y = base + LV * k + 0.04;
+      for (const s of [-1, 1]) {
+        const qc = q.clone().multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -s * dir * 0.6));
+        batch.box({ x: W(x), y, z: Z(zc + s * 1.25) }, { x: 0.3, y: 0.03, z: 2.9 }, mats.paintYellow, qc, false);
+      }
+    }
+    // edges of the deck hole above the ramp's low end
+    const deck = base + LV;
+    const [z0, z1] = bayZ(bay);
+    const inner = bay === 'back' ? -BAY + 0.12 : BAY - 0.12;
+    wall(lowX, z0, lowX, z1, deck);
+    wall(Math.min(lowX, highX) + (dir === 1 ? 0 : 1.5), inner, Math.max(lowX, highX) - (dir === 1 ? 1.5 : 0), inner, deck);
+  };
+  ramp('back', 0, 1);
+  ramp('front', LV, -1);
+  ramp('back', LV * 2, 1);
 
   // --------------------------------------------------------------- parapets
-  for (const y of [LV, LV * 2]) {
-    // north & south
-    wall(-30, -18, 30, -18, y, 1.05, mats.concrete);
-    wall(-30, 18, 30, 18, y, 1.05, mats.concrete);
-    // east
-    wall(30, -18, 30, 18, y, 1.05, mats.concrete);
-    // west — the roof has a gap (z 5..16) facing the showroom
-    if (y === LV) wall(-30, -18, -30, 18, y, 1.05, mats.concrete);
-    else {
-      wall(-30, -18, -30, 5, y, 1.05, mats.concrete);
-      wall(-30, 16, -30, 18, y, 1.05, mats.concrete);
-    }
-    // teal band along the facade
-    for (const [x0, z0, x1, z1] of [[-30, -18.14, 30, -18.14], [-30, 18.14, 30, 18.14], [30.14, -18, 30.14, 18]] as const) {
+  // perimeter walls on every deck, open over each ramp hole, plus the two stunt gaps
+  const DIVE: [number, number] = [-30, -18]; // L1 front: the deck dive
+  const LEAP: [number, number] = [-6, 6]; // roof west: the leap
+  decks.forEach((y, i) => {
+    const hole = holes[i];
+    const runX = (z: number, gaps: [number, number][]) => {
+      const cuts = [...gaps].sort((a, b) => a[0] - b[0]);
+      let x = -HX;
+      for (const [a, b] of cuts) {
+        if (a > x) wall(x, z, a, z, y);
+        x = b;
+      }
+      if (x < HX) wall(x, z, HX, z, y);
+    };
+    runX(-HZ, hole === 'back' ? [RAMP_X] : []);
+    runX(HZ, [...(hole === 'front' ? [RAMP_X] : []), ...(y === LV ? [DIVE] : [])]);
+    wall(HX, -HZ, HX, HZ, y);
+    if (y === ROOF) {
+      wall(-HX, -HZ, -HX, LEAP[0], y);
+      wall(-HX, LEAP[1], -HX, HZ, y);
+    } else wall(-HX, -HZ, -HX, HZ, y);
+    // teal band along the facades
+    for (const [x0, z0, x1, z1] of [[-HX, -HZ - 0.14, HX, -HZ - 0.14], [-HX, HZ + 0.14, HX, HZ + 0.14], [HX + 0.14, -HZ, HX + 0.14, HZ], [-HX - 0.14, -HZ, -HX - 0.14, HZ]] as const) {
       const len = Math.hypot(x1 - x0, z1 - z0);
       const yaw = Math.atan2(x1 - x0, z1 - z0);
-      batch.box({ x: W((x0 + x1) / 2), y: y + 0.75, z: Z((z0 + z1) / 2) }, { x: 0.04, y: 0.22, z: len }, mats.paintTeal,
+      batch.box({ x: W((x0 + x1) / 2), y: y - 0.55, z: Z((z0 + z1) / 2) }, { x: 0.04, y: 0.3, z: len }, mats.paintTeal,
         new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw), false);
     }
-  }
-  // hazard stripes around the roof gap
-  for (let i = 0; i < 11; i++) {
-    batch.box({ x: W(-29.6), y: LV * 2 + 0.01, z: Z(5.5 + i) }, { x: 0.8, y: 0.02, z: 0.5 }, i % 2 ? mats.dark : mats.paintYellow, undefined, false);
-  }
+  });
 
   // ---------------------------------------------------------------- pillars
-  const pillarXs = [-20, -10, 0, 10, 20];
+  const pillarXs = [-40, -24, -8, 8, 24, 40];
   for (const px of pillarXs) {
-    for (const pz of [-12.2, 12.2]) { // no centre pillar line: wide open decks
-      solid(px, LV, pz, 0.6, LV * 2, 0.6, mats.concrete);
-      // yellow/black guard at the bottom of each level
-      for (const y of [0, LV]) batch.box({ x: W(px), y: y + 0.4, z: Z(pz) }, { x: 0.64, y: 0.8, z: 0.64 }, mats.paintYellow, undefined, false);
+    for (const pz of [-BAY, BAY]) {
+      solid(px, ROOF / 2, pz, 0.7, ROOF, 0.7, mats.concrete);
+      for (const y of [0, LV, LV * 2]) batch.box({ x: W(px), y: y + 0.45, z: Z(pz) }, { x: 0.74, y: 0.9, z: 0.74 }, mats.paintYellow, undefined, false);
     }
   }
-  // perimeter columns
-  for (let x = -30; x <= 30; x += 10) {
-    for (const z of [-17.8, 17.8]) solid(x === -30 ? -29.8 : x === 30 ? 29.8 : x, LV - 0.15, z, 0.5, LV * 2 - 0.3, 0.5, mats.concrete);
+  // perimeter columns: 16 m apart, so the open ground floor can be driven into from anywhere
+  for (let x = -HX; x <= HX; x += 16) {
+    const cx = Math.max(-HX + 0.2, Math.min(HX - 0.2, x));
+    for (const z of [-HZ + 0.2, HZ - 0.2]) solid(cx, ROOF / 2 - slab / 2, z, 0.4, ROOF - slab, 0.4, mats.concrete);
   }
-  for (const z of [-8, 8]) solid(29.8, LV - 0.15, z, 0.5, LV * 2 - 0.3, 0.5, mats.concrete);
-  for (const z of [-8, 8]) if (z !== 8) solid(-29.8, LV - 0.15, z, 0.5, LV * 2 - 0.3, 0.5, mats.concrete);
-  solid(-29.8, LV / 2, 8, 0.5, LV, 0.5, mats.concrete);
+  for (const z of [-10, 10]) for (const x of [-HX + 0.2, HX - 0.2]) solid(x, ROOF / 2 - slab / 2, z, 0.4, ROOF - slab, 0.4, mats.concrete);
 
-  // stair tower
-  solid(-33, LV + 1, 15, 6, LV * 2 + 2, 6, mats.concreteDark);
-  batch.box({ x: W(-33), y: LV * 2 + 2.1, z: Z(15) }, { x: 6.4, y: 0.25, z: 6.4 }, mats.paintTeal);
+  // stair tower outside the east facade
+  solid(53, ROOF / 2 + 1.2, -18, 6, ROOF + 2.4, 6, mats.concreteDark);
+  batch.box({ x: W(53), y: ROOF + 2.5, z: Z(-18) }, { x: 6.4, y: 0.25, z: 6.4 }, mats.paintTeal);
 
   // ----------------------------------------------------------- ceiling lights
-  for (const y of [LV - slab - 0.06, LV * 2 - slab - 0.06]) {
-    for (const z of [-9, 9]) {
-      for (let x = -25; x <= 15; x += 6) {
-        if (y > LV && x < -20) continue;
-        batch.box({ x: W(x), y, z: Z(z) }, { x: 1.6, y: 0.06, z: 0.18 }, mats.lightStrip, undefined, false);
-      }
+  for (const y of [LV, LV * 2, ROOF]) {
+    for (const z of [-7, 0, 7]) {
+      for (let x = -42; x <= 42; x += 7) batch.box({ x: W(x), y: y - slab - 0.04, z: Z(z) }, { x: 1.8, y: 0.06, z: 0.2 }, mats.lightStrip, undefined, false);
     }
   }
 
   // ------------------------------------------------------- stalls + parked
-  const stallW = 2.6;
-  const levels = [0, LV, LV * 2];
-  for (const y of levels) {
-    const rows: { z0: number; dir: 1 | -1 }[] = [
-      { z0: -18, dir: 1 }, { z0: 18, dir: -1 },
-    ];
-    for (const row of rows) {
-      for (let x = -20 + stallW / 2; x < 20; x += stallW) {
-        const depth = 5.0;
-        const zc = row.z0 + row.dir * depth / 2;
-        paintLine(W(x - stallW / 2), y + 0.012, Z(zc), 0.1, depth);
-        const nearPillar = pillarXs.some((px) => Math.abs(px - x) < 1.45);
-        if (!nearPillar && rand() < (y === 0 ? 0.4 : y === LV ? 0.3 : 0.2)) {
-          const kinds = ['sedan', 'sedan', 'hatch', 'suv', 'executive', 'van'];
-          const kind = kinds[(rand() * kinds.length) | 0];
-          const yaw = row.dir === 1 ? Math.PI : 0;
-          // nose in (cars face the wall)
-          parked.place(kind, W(x), y, Z(row.z0 + row.dir * 2.78), yaw + (rand() - 0.5) * 0.06, CAR_COLORS[(rand() * CAR_COLORS.length) | 0]);
-        }
+  // rows against the outer walls only, kept clear of ramp mouths and the stunt run-ups
+  const stalls: { y: number; bay: Bay; ranges: [number, number][] }[] = [
+    { y: 0, bay: 'back', ranges: [[-46, -10], [36, 46]] },
+    { y: 0, bay: 'front', ranges: [[-46, -34], [36, 46]] },
+    { y: LV, bay: 'back', ranges: [[-46, 0]] },
+    { y: LV, bay: 'front', ranges: [[-46, -32], [-16, 0]] },
+    { y: LV * 2, bay: 'back', ranges: [[-46, -10], [36, 46]] },
+    { y: LV * 2, bay: 'front', ranges: [[-46, -10], [36, 46]] },
+    { y: ROOF, bay: 'back', ranges: [[-36, 0]] },
+    { y: ROOF, bay: 'front', ranges: [[-36, 46]] },
+  ];
+  const stallW = 2.7, depth = 5;
+  const kinds = ['sedan', 'sedan', 'hatch', 'suv', 'executive', 'van'];
+  for (const { y, bay, ranges } of stalls) {
+    const wallZ = bay === 'back' ? -HZ + 0.4 : HZ - 0.4;
+    const dir = bay === 'back' ? 1 : -1;
+    for (const [a, b] of ranges) {
+      const n = Math.floor((b - a) / stallW);
+      for (let i = 0; i <= n; i++) paintLine(W(a + i * stallW), y + 0.012, Z(wallZ + dir * depth / 2), 0.1, depth);
+      for (let i = 0; i < n; i++) {
+        const x = a + (i + 0.5) * stallW;
+        if (pillarXs.some((px) => Math.abs(px - x) < 1.2) || rand() > (y === 0 ? 0.42 : 0.3)) continue;
+        // nose in (cars face the wall)
+        parked.place(kinds[(rand() * kinds.length) | 0], W(x), y, Z(wallZ + dir * 2.7), (dir === 1 ? Math.PI : 0) + (rand() - 0.5) * 0.06, CAR_COLORS[(rand() * CAR_COLORS.length) | 0]);
       }
-      paintLine(W(20), y + 0.012, Z(row.z0 + row.dir * 2.5), 0.1, 5);
     }
   }
+  // dashed lane guides down the centre of every deck
+  for (const y of [0, ...decks]) for (let x = -42; x < 42; x += 6) paintLine(W(x), y + 0.012, Z(0), 3, 0.14, 0);
 
-  // cones lining the gap and some bins
-  // cones mark the edges of the roof gap, leaving the run-up clear
-  for (const [cx, cz] of [[-28.6, 4.3], [-27.2, 4.3], [-28.6, 16.7], [-27.2, 16.7]]) props.add('cone', W(cx), LV * 2, Z(cz));
-  props.add('barrel', W(-26), LV * 2, Z(16.5));
-  props.add('barrelBlue', W(-25.2), LV * 2, Z(16.8));
-  props.add('bin', W(25), 0, Z(-16.8));
-  props.add('binBlue', W(26), 0, Z(-16.8));
+  // ------------------------------------------------------------ stunt gaps
+  const hz = hazardMaterial();
+  // ROOF LEAP: a low kicker at the west gap, pointed at the showroom across the street
+  wedge(batch, phys, hz, { x: W(-40.5), z: Z(0) }, { x: W(-47.9), z: Z(0) }, LEAP[1] - LEAP[0] - 1, 0.8, ROOF);
+  for (const z of [LEAP[0] - 0.6, LEAP[1] + 0.6]) {
+    props.add('cone', W(-44), ROOF, Z(z));
+    props.add('cone', W(-46.6), ROOF, Z(z));
+  }
+  // DECK DIVE: a kicker out through the L1 front wall, into the stunt yard
+  wedge(batch, phys, hz, { x: W((DIVE[0] + DIVE[1]) / 2), z: Z(18.5) }, { x: W((DIVE[0] + DIVE[1]) / 2), z: Z(HZ - 0.1) }, DIVE[1] - DIVE[0] - 1, 0.7, LV);
+  // hazard frames around both openings
+  solidHull(batch, phys, [V(-HX - 0.15, ROOF, LEAP[0] - 0.4), V(-HX + 0.15, ROOF, LEAP[0] - 0.4), V(-HX - 0.15, ROOF + 1.3, LEAP[0] - 0.4), V(-HX + 0.15, ROOF + 1.3, LEAP[0] - 0.4),
+    V(-HX - 0.15, ROOF, LEAP[0]), V(-HX + 0.15, ROOF, LEAP[0]), V(-HX - 0.15, ROOF + 1.3, LEAP[0]), V(-HX + 0.15, ROOF + 1.3, LEAP[0])], hz);
+  solidHull(batch, phys, [V(-HX - 0.15, ROOF, LEAP[1]), V(-HX + 0.15, ROOF, LEAP[1]), V(-HX - 0.15, ROOF + 1.3, LEAP[1]), V(-HX + 0.15, ROOF + 1.3, LEAP[1]),
+    V(-HX - 0.15, ROOF, LEAP[1] + 0.4), V(-HX + 0.15, ROOF, LEAP[1] + 0.4), V(-HX - 0.15, ROOF + 1.3, LEAP[1] + 0.4), V(-HX + 0.15, ROOF + 1.3, LEAP[1] + 0.4)], hz);
+  for (const x of DIVE) solid(x, LV + 0.65, HZ, 0.4, 1.3, 0.3, hz);
 
   // --------------------------------------------------------------- signage
   const sign = (text: string, sub: string | undefined, x: number, y: number, z: number, w: number, h: number, yaw: number, bg = '#2f8f8a', fg = '#ffffff') => {
@@ -202,21 +241,30 @@ export function buildGarage(
     m.rotation.y = yaw;
     scene.add(m);
   };
-  sign('P', undefined, 0, LV * 2 + 1.6, 18.3, 2.4, 2.4, 0, '#1d4f91');
-  sign('CENTRAL CAR PARK', 'open 24 hours', 0, LV + 3.0, 18.31, 9, 1.6, 0);
-  sign('LEVEL 1', undefined, -10, LV + 2.6, 11.88, 3, 0.6, Math.PI, '#f2c230', '#1a1a1a'); // on a pillar, facing the open deck
-  sign('ROOF', undefined, -10, LV * 2 + 2.6, 0.32, 3, 0.6, 0, '#f2c230', '#1a1a1a');
-  sign('UP ▲', undefined, 25.5, LV - 1.0, -12.5, 3, 0.7, Math.PI, '#f2c230', '#1a1a1a');
-  // roof sign post
-  const postGeo = new THREE.CylinderGeometry(0.06, 0.06, 2.4, 8);
-  batch.add(postGeo, mats.metal, new THREE.Matrix4().makeTranslation(W(-10), LV * 2 + 1.2, Z(0.3)));
+  sign('P', undefined, 24, ROOF + 2.0, HZ + 0.3, 3, 3, 0, '#1d4f91');
+  batch.add(new THREE.CylinderGeometry(0.08, 0.08, 3.6, 8), mats.metal, new THREE.Matrix4().makeTranslation(W(24), ROOF + 1.8, Z(HZ + 0.2)));
+  sign('CENTRAL CAR PARK', 'open 24 hours · 4 levels', -4, LV * 2 - 1.6, HZ + 0.31, 12, 2, 0);
+  sign('LEVEL 1', undefined, -8, LV + 3.0, -BAY + 0.36, 3, 0.6, 0, '#f2c230', '#1a1a1a');
+  sign('LEVEL 2', undefined, -8, LV * 2 + 3.0, -BAY + 0.36, 3, 0.6, 0, '#f2c230', '#1a1a1a');
+  // hanging signs over each ramp entrance, facing the approaching driver
+  sign('LEVEL 1 ▲', undefined, 2.5, LV - slab - 0.9, -20, 3.4, 0.7, -Math.PI / 2, '#f2c230', '#1a1a1a');
+  sign('LEVEL 2 ▲', undefined, 35.5, LV * 2 - slab - 0.9, 20, 3.4, 0.7, Math.PI / 2, '#f2c230', '#1a1a1a');
+  sign('ROOF ▲', undefined, 2.5, ROOF - slab - 0.9, -20, 3.4, 0.7, -Math.PI / 2, '#f2c230', '#1a1a1a');
+  sign('NO EXIT', 'seriously', -HX + 3, ROOF + 2.2, LEAP[1] + 1.5, 2.4, 1.0, Math.PI / 2, '#c62828', '#ffffff');
+  batch.add(new THREE.CylinderGeometry(0.06, 0.06, 2.2, 8), mats.metal, new THREE.Matrix4().makeTranslation(W(-HX + 3), ROOF + 1.1, Z(LEAP[1] + 1.48)));
 
   buildShowroom(scene, phys, batch, mats, parked, props);
+
+  return [
+    // takeoff registers a few steps after the wheels leave the lip, so the boxes reach past the edge
+    feature('roofleap', 'ROOF LEAP', [W(-57), ROOF - 2, Z(LEAP[0] - 1)], [W(-41), ROOF + 5, Z(LEAP[1] + 1)]),
+    feature('deckdive', 'DECK DIVE', [W(DIVE[0] - 1), LV - 2, Z(HZ - 7)], [W(DIVE[1] + 1), LV + 4, Z(HZ + 6)]),
+  ];
 }
 
-/** A glass-fronted rental showroom across from the roof gap, plus the soft landing. */
+/** A two-storey glass-fronted rental showroom across the street from the roof gap. */
 function buildShowroom(scene: THREE.Scene, phys: Physics, batch: StaticBatch, mats: Materials, parked: ParkedCars, props: Props) {
-  const x0 = -64, x1 = -50, z0 = -46, z1 = -24, h = 4.6;
+  const { x0, x1, z0, z1, h } = SHOWROOM;
   const solid = (cx: number, cy: number, cz: number, sx: number, sy: number, sz: number, mat: THREE.Material) => {
     batch.box({ x: cx, y: cy, z: cz }, { x: sx, y: sy, z: sz }, mat);
     phys.staticBox({ x: cx, y: cy, z: cz }, { x: sx / 2, y: sy / 2, z: sz / 2 });
@@ -230,32 +278,27 @@ function buildShowroom(scene: THREE.Scene, phys: Physics, batch: StaticBatch, ma
   solid(cx, h / 2, z1 - 0.2, x1 - x0, h, 0.4, wallMat);
   solid(cx, h + 0.25, cz, x1 - x0 + 0.6, 0.5, z1 - z0 + 0.6, mats.paintTeal); // roof
   solid(x1, h - 0.35, cz, 0.5, 0.7, z1 - z0, mats.paintTeal); // fascia above glass
-  // mullions
-  for (const z of [z0 + 0.3, cz - 5.3, cz, cz + 5.3, z1 - 0.3]) solid(x1, (h - 0.7) / 2, z, 0.18, h - 0.7, 0.18, mats.metal);
-  // glass panes (dynamic, they topple when hit)
+  // interior lights
+  for (let z = z0 + 3; z < z1 - 2; z += 4) batch.box({ x: cx, y: h - 0.05, z }, { x: 6, y: 0.06, z: 0.3 }, mats.lightStrip, undefined, false);
+  // mullions + transom
   const paneW = 5.1;
-  for (const z of [cz - 7.95, cz - 2.65, cz + 2.65, cz + 7.95]) props.pane(x1, 0.04, z, paneW, h - 0.78, Math.PI / 2);
+  const centres = [cz - 7.95, cz - 2.65, cz + 2.65, cz + 7.95];
+  for (const z of [z0 + 0.3, cz - 5.3, cz, cz + 5.3, z1 - 0.3]) solid(x1, (h - 0.7) / 2, z, 0.18, h - 0.7, 0.18, mats.metal);
+  // glass panes (dynamic, they topple when hit) in two tiers
+  const lowH = 3.2;
+  for (const z of centres) {
+    props.pane(x1, 0.04, z, paneW, lowH - 0.08, Math.PI / 2);
+    props.pane(x1, lowH + 0.02, z, paneW, h - 0.7 - lowH - 0.1, Math.PI / 2);
+  }
   // sign
   const tex = signTexture('CAR RENTAL', { sub: 'drive away today', bg: '#ffffff', fg: '#c62828', w: 1024, h: 256 });
-  const sign = new THREE.Mesh(new THREE.PlaneGeometry(9, 2.2), new THREE.MeshStandardMaterial({ map: tex, roughness: 0.4, emissive: 0xffffff, emissiveIntensity: 0.15, emissiveMap: tex }));
-  sign.position.set(x1 + 0.32, h + 0.9, cz);
+  const sign = new THREE.Mesh(new THREE.PlaneGeometry(10, 2.4), new THREE.MeshStandardMaterial({ map: tex, roughness: 0.4, emissive: 0xffffff, emissiveIntensity: 0.15, emissiveMap: tex }));
+  sign.position.set(x1 + 0.32, h + 1.2, cz);
   sign.rotation.y = Math.PI / 2;
   scene.add(sign);
-  solid(x1 + 0.1, h + 0.9, cz, 0.2, 2.2, 9.2, mats.white);
+  solid(x1 + 0.1, h + 1.2, cz, 0.2, 2.4, 10.2, mats.white);
   // counter + showroom cars
   solid(x0 + 3, 0.55, cz, 1.2, 1.1, 5, mats.dark);
-  parked.place('executive', -57, 0.04, cz - 5.5, Math.PI / 2 + 0.3, 0xb01e23);
-  parked.place('suv', -57, 0.04, cz + 5.5, Math.PI / 2 - 0.3, 0xf2f2ef);
-
-  // landing pile of boxes below the roof gap
-  const rand = rng(9);
-  for (let layer = 0; layer < 3; layer++) {
-    for (let i = 0; i < 6; i++) {
-      for (let j = 0; j < 5; j++) {
-        if (layer === 2 && rand() < 0.5) continue;
-        props.add(rand() < 0.5 ? 'boxBig' : 'box', -43 + i * 1.0 + (rand() - 0.5) * 0.1, layer * 0.72, -36 + j * 1.0, (rand() - 0.5) * 0.3);
-      }
-    }
-  }
-  for (let i = 0; i < 4; i++) props.add('pallet', -38.5, i * 0.15, -32 + (i % 2) * 0.05);
+  parked.place('executive', -98, 0.04, cz - 5.5, Math.PI / 2 + 0.3, 0xb01e23);
+  parked.place('suv', -98, 0.04, cz + 5.5, Math.PI / 2 - 0.3, 0xf2f2ef);
 }

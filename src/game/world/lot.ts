@@ -3,6 +3,7 @@ import { RAPIER, G, groups, staticInstances, type Physics } from '../physics';
 import { StaticBatch } from './batch';
 import { CAR_COLORS, ParkedCars, Props } from './dynamics';
 import { buildGarage, makeMaterials } from './garage';
+import { buildStuntYard, type StuntFeature } from './stuntPark';
 import { arrowTexture, asphaltTexture, fenceTexture, rng, signTexture } from './textures';
 import {
   benchGeo, bollardGeo, hedgeGeo, lampGeo, propMaterial, propMaterialFlat, treeGeo,
@@ -15,6 +16,8 @@ export interface LotWorld {
   update(dt: number, playerPos: THREE.Vector3): void;
   parked: ParkedCars;
   props: Props;
+  /** Named stunt launch spots. */
+  features: StuntFeature[];
   /** Safe spawn point (y = ground) and heading. */
   spawn: { x: number; y: number; z: number; yaw: number };
 }
@@ -60,8 +63,8 @@ export function buildLot(scene: THREE.Scene, phys: Physics): LotWorld {
   const lamp = lampGeo();
   const lampMats: THREE.Matrix4[] = [];
   const trees: { x: number; z: number; kind: number; s: number; r: number }[] = [];
-  // three wide-spaced blocks: ~17 m driving aisles between them
-  const blocksZ = [-6, 22, 50];
+  // two wide-spaced blocks: ~17 m driving aisle between them; the stunt yard sits in front of the car park
+  const blocksZ = [22, 50];
   const stallW = 2.6;
   const depth = 5.5;
   const kinds = ['sedan', 'sedan', 'sedan', 'hatch', 'hatch', 'suv', 'suv', 'van', 'executive'];
@@ -100,7 +103,7 @@ export function buildLot(scene: THREE.Scene, phys: Physics): LotWorld {
   }
 
   // central boulevard: dashed centre line, arrows, speed bumps
-  for (let z = -18; z < 98; z += 6) paintLine(0, 0.012, z, 0.15, 3, 0, true);
+  for (let z = 12; z < 98; z += 6) paintLine(0, 0.012, z, 0.15, 3, 0, true);
   const arrowMat = new THREE.MeshStandardMaterial({ map: arrowTexture(), transparent: true, roughness: 0.7, polygonOffset: true, polygonOffsetFactor: -2, depthWrite: false });
   for (const [z, dir] of [[8, 1], [40, 1], [78, 1], [22, -1], [62, -1]] as const) {
     const a = new THREE.Mesh(new THREE.PlaneGeometry(1.4, 2.8), arrowMat);
@@ -122,11 +125,17 @@ export function buildLot(scene: THREE.Scene, phys: Physics): LotWorld {
   bumpStripe(0, 36);
   bumpStripe(0, 70);
 
-  // aisle in front of the garage
-  for (let x = -100; x < 100; x += 6) paintLine(x, 0.012, -22.5, 3, 0.15, 0, true);
-
   // ------------------------------------------------------- garage + shop
-  buildGarage(scene, phys, batch, mats, parked, props, (x, y, z, w, l, yaw) => paintLine(x, y, z, w, l, yaw));
+  const features = buildGarage(scene, phys, batch, mats, parked, props, (x, y, z, w, l, yaw) => paintLine(x, y, z, w, l, yaw));
+  features.push(...buildStuntYard(phys, batch, mats, parked));
+
+  // the street between the car park's roof gap and the rental showroom
+  for (let z = -97; z < -16; z += 1) {
+    paintLine(-61.15, 0.012, z + 0.5, 0.12, 1, 0, true);
+    paintLine(-60.85, 0.012, z + 0.5, 0.12, 1, 0, true);
+  }
+  for (let z = -96; z < -16; z += 5) for (const x of [-71, -51]) paintLine(x, 0.012, z, 0.14, 3);
+  for (let i = 0; i < 14; i++) paintLine(-68 + i * 1.1, 0.013, -21, 0.55, 4); // zebra crossing
 
   // ------------------------------------------------------------- fence
   const fenceTex = fenceTexture();
@@ -311,22 +320,22 @@ export function buildLot(scene: THREE.Scene, phys: Physics): LotWorld {
   }
 
   // ------------------------------------------------------------- props
-  // cone slalom east of the garage
-  for (let i = 0; i < 12; i++) props.add('cone', 38 + i * 5, 0, -40 + (i % 2 ? 1.2 : -1.2));
+  // cone slalom east of the car park
+  for (let i = 0; i < 8; i++) props.add('cone', 90 + (i % 2 ? 1.2 : -1.2), 0, -64 + i * 5);
   // construction corner (north-east)
-  for (let i = 0; i < 10; i++) props.add(i % 2 ? 'barrier' : 'barrierWhite', 45 + i * 1.6, 0, -72);
-  for (let i = 0; i < 6; i++) props.add(i % 2 ? 'barrier' : 'barrierWhite', 44, 0, -73.5 - i * 1.6, Math.PI / 2);
-  for (let i = 0; i < 9; i++) props.add(rand() > 0.5 ? 'barrel' : 'barrelBlue', 52 + (i % 3) * 0.7, 0, -80 + Math.floor(i / 3) * 0.7);
-  for (let i = 0; i < 5; i++) for (let k = 0; k < 3; k++) props.add('pallet', 62 + i * 1.4, k * 0.15, -82);
-  for (let i = 0; i < 12; i++) props.add('boxBig', 70 + (i % 4) * 1, Math.floor(i / 4) * 0.72, -84);
-  batch.box({ x: 80, y: 0.9, z: -86 }, { x: 4, y: 1.8, z: 2 }, mats.paintTeal);
-  phys.staticBox({ x: 80, y: 0.9, z: -86 }, { x: 2, y: 0.9, z: 1 });
+  for (let i = 0; i < 10; i++) props.add(i % 2 ? 'barrier' : 'barrierWhite', 78 + i * 1.6, 0, -82);
+  for (let i = 0; i < 6; i++) props.add(i % 2 ? 'barrier' : 'barrierWhite', 77, 0, -83.5 - i * 1.6, Math.PI / 2);
+  for (let i = 0; i < 9; i++) props.add(rand() > 0.5 ? 'barrel' : 'barrelBlue', 82 + (i % 3) * 0.7, 0, -90 + Math.floor(i / 3) * 0.7);
+  for (let i = 0; i < 5; i++) for (let k = 0; k < 3; k++) props.add('pallet', 88 + i * 1.4, k * 0.15, -92);
+  for (let i = 0; i < 12; i++) props.add('boxBig', 97 + (i % 4) * 1, Math.floor(i / 4) * 0.72, -94);
+  batch.box({ x: 104, y: 0.9, z: -96 }, { x: 4, y: 1.8, z: 2 }, mats.paintTeal);
+  phys.staticBox({ x: 104, y: 0.9, z: -96 }, { x: 2, y: 0.9, z: 1 });
   // trolley corral by the entrance
   for (let i = 0; i < 7; i++) props.add('trolley', -60 + i * 0.35, 0, 88, Math.PI / 2);
   // bins along the plaza
   for (let i = 0; i < 6; i++) props.add(i % 2 ? 'bin' : 'binBlue', 50 + i * 0.75, 0, 96);
-  // loose barrels in the open corner west of the garage
-  for (let i = 0; i < 6; i++) props.add('barrel', -80 + i * 2.2, 0, -60 + (i % 2) * 1.5);
+  // loose barrels beside the showroom
+  for (let i = 0; i < 6; i++) props.add('barrel', -104 + (i % 3) * 0.8, 0, -34 - Math.floor(i / 3) * 0.8);
 
   // ------------------------------------------------------------- finish
   const lines = new THREE.InstancedMesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshStandardMaterial({
@@ -350,6 +359,7 @@ export function buildLot(scene: THREE.Scene, phys: Physics): LotWorld {
   return {
     parked,
     props,
+    features,
     spawn: { x: 6, y: 0, z: 46, yaw: Math.PI },
     update(dt, p) {
       time += dt;

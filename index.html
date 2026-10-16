@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="theme-color" content="#cfdde3" />
-    <title>TND Car Chase</title>
+    <title>Backseat Driver</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;600&display=swap" />
   </head>
@@ -16,17 +16,17 @@
       <p id="loading-text">paving the car park…</p>
     </div>
 
-    <header class="brand" id="brand">tnd car <b>chase</b></header>
+    <header class="brand" id="brand">backseat <b>driver</b></header>
 
     <section id="title" class="title hidden">
       <div class="title-left">
-        <h1>tnd car <b>chase</b></h1>
+        <h1>backseat <b>driver</b></h1>
         <p class="tag">a remote-controlled drive through a multi-storey car park.<br />your phone is the remote.</p>
         <ol class="steps">
           <li><span>1</span>scan the code with your phone's camera</li>
           <li><span>2</span>drag your thumb on the touchpad to drive</li>
           <li><span>3</span>left thumb: guns &amp; missiles</li>
-          <li><span>4</span>find the gap on the roof…</li>
+          <li><span>4</span>hit the striped ramps · find the gap on the roof…</li>
         </ol>
         <button id="kb-start" class="ghost">or drive with the keyboard <kbd>enter</kbd></button>
       </div>
@@ -58,6 +58,7 @@
         <span><kbd>G</kbd> missile</span>
         <span><kbd>C</kbd> camera</span>
         <span><kbd>V</kbd> steering assist</span>
+        <span><kbd>K</kbd> stunt cam</span>
         <span><kbd>R</kbd> reset car</span>
         <span><kbd>Q</kbd> pairing code</span>
         <span><kbd>M</kbd> mute</span>
@@ -65,6 +66,14 @@
         <span><kbd>H</kbd> hide</span>
       </div>
       <div class="sound-note" id="sound-note">click anywhere for sound</div>
+    </div>
+
+    <div id="letterbox" class="letterbox"><i></i><i></i></div>
+    <div id="stunt-card" class="stunt-card">
+      <small id="stunt-tags"></small>
+      <h2 id="stunt-title"></h2>
+      <p id="stunt-stats"></p>
+      <b id="stunt-points"></b>
     </div>
 
     <div id="toast" class="toast"></div>

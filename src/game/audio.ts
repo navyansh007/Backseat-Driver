@@ -123,6 +123,17 @@ export class CarAudio {
     return this.muted;
   }
 
+  /** Silence every sound effect (stunt cinematics play the score alone), or bring them back. */
+  silenceSfx(on: boolean) {
+    if (!this.ctx) return;
+    const g = this.sfx.gain;
+    const now = this.ctx.currentTime;
+    g.cancelScheduledValues(now);
+    g.setValueAtTime(g.value, now);
+    if (on) g.linearRampToValueAtTime(0, now + 0.08);
+    else g.linearRampToValueAtTime(SFX_LEVEL, now + 0.6);
+  }
+
   /** speed m/s (abs), throttle 0..1, slip 0..1 */
   update(dt: number, speed: number, throttle: number, slip: number, reversing: boolean) {
     // simulated automatic gearbox
