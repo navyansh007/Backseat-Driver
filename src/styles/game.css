@@ -65,11 +65,13 @@ button.ghost:hover { background: var(--glass-strong); }
 .pips i { width: 6px; height: 12px; border-radius: 2px; background: rgba(255,255,255,0.22); }
 .pips i.on { background: #fff; box-shadow: 0 0 6px rgba(255,255,255,0.6); }
 @keyframes blink { 50% { opacity: 0.35; } }
-.lock { position: absolute; left: 0; top: 0; width: 86px; height: 86px; transition: opacity 0.15s; }
-.lock::before, .lock::after { content: ''; position: absolute; inset: 0; border: 2px solid #ff5a3c;
-  clip-path: polygon(0 0, 30% 0, 30% 3px, 3px 3px, 3px 30%, 0 30%, 0 0, 100% 0, 100% 30%, calc(100% - 3px) 30%, calc(100% - 3px) 3px, 70% 3px, 70% 0, 100% 0, 100% 100%, 70% 100%, 70% calc(100% - 3px), calc(100% - 3px) calc(100% - 3px), calc(100% - 3px) 70%, 100% 70%, 100% 100%, 0 100%, 0 70%, 3px 70%, 3px calc(100% - 3px), 30% calc(100% - 3px), 30% 100%, 0 100%); }
-.lock::after { inset: 10px; border-width: 1px; opacity: 0.6; animation: spin 2.4s linear infinite; }
-.lock span { position: absolute; top: -18px; left: 50%; transform: translateX(-50%); font: 600 10px 'JetBrains Mono', monospace; letter-spacing: 0.2em; color: #ff5a3c; text-transform: uppercase; }
+.lock { position: absolute; left: 0; top: 0; width: 64px; height: 64px; transition: opacity 0.15s; filter: drop-shadow(0 0 2px rgba(0,0,0,0.45)); }
+.lock svg { display: block; width: 100%; height: 100%; overflow: visible; fill: none; stroke: #ff5a3c; stroke-width: 1.6; stroke-linecap: round; }
+.lock .pip { fill: #ff5a3c; stroke: none; }
+/* one quick settle when a new target is acquired, then it holds still */
+.lock.acquire svg { animation: lock-in 0.22s cubic-bezier(0.2, 0.7, 0.2, 1); }
+@keyframes lock-in { from { transform: scale(1.6); opacity: 0; } to { transform: none; opacity: 1; } }
+.lock span { position: absolute; top: -14px; left: 50%; transform: translateX(-50%); font: 600 9px 'JetBrains Mono', monospace; letter-spacing: 0.2em; color: #ff5a3c; text-transform: uppercase; }
 .link-chip { pointer-events: auto; position: absolute; top: 14px; right: 18px; display: flex; gap: 8px; align-items: center; cursor: pointer;
   font: 500 12px Inter, sans-serif; color: var(--ink); background: var(--glass); backdrop-filter: blur(12px); border: 1px solid rgba(255,255,255,0.6);
   padding: 7px 12px; border-radius: 999px; }

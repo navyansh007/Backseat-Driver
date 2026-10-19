@@ -2,19 +2,19 @@
  * Tiny WebSocket relay that pairs a game screen ("host") with phones ("remote")
  * by room code. It is mounted on Vite's own HTTP server, so `npm run dev` and
  * `npm run preview` serve the game, the remote page and the relay on one port.
+ * In production the same routing runs in a Cloudflare Durable Object (worker/).
  */
 import type { Plugin, ViteDevServer, PreviewServer } from 'vite';
 import type { IncomingMessage, Server as HttpServer } from 'node:http';
 import type { Duplex } from 'node:stream';
 import os from 'node:os';
 import { WebSocketServer, WebSocket } from 'ws';
-
-const RELAY_PATH = '/relay';
-const LAN_ENDPOINT = '/api/lan';
+import { LAN_ENDPOINT, MAX_FRAME, RELAY_PATH } from '../src/shared/protocol';
+import { fromHost, fromRemote, parseParams, peerMsgs } from './relayCore';
 
 interface Room {
   host: WebSocket | null;
-  remotes: Set<WebSocket>;
+  remotes: Map<WebSocket, string>;
 }
 
 function lanAddresses(): string[] {
@@ -29,57 +29,60 @@ function lanAddresses(): string[] {
   return out.sort((a, b) => score(a) - score(b));
 }
 
-function send(ws: WebSocket | null | undefined, data: unknown) {
-  if (ws && ws.readyState === WebSocket.OPEN) ws.send(typeof data === 'string' ? data : JSON.stringify(data));
+function send(ws: WebSocket | null | undefined, text: string) {
+  if (ws && ws.readyState === WebSocket.OPEN) ws.send(text);
 }
 
 function attachRelay(httpServer: HttpServer) {
-  const wss = new WebSocketServer({ noServer: true, maxPayload: 4096 });
+  const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_FRAME });
   const rooms = new Map<string, Room>();
   const alive = new WeakMap<WebSocket, boolean>();
 
   const getRoom = (code: string) => {
     let r = rooms.get(code);
     if (!r) {
-      r = { host: null, remotes: new Set() };
+      r = { host: null, remotes: new Map() };
       rooms.set(code, r);
     }
     return r;
   };
 
   const announce = (room: Room) => {
-    const count = room.remotes.size;
-    send(room.host, { t: 'peer', role: 'remote', online: count > 0, count });
-    for (const r of room.remotes) send(r, { t: 'peer', role: 'host', online: !!room.host, count });
+    const { toHost, toRemote } = peerMsgs(!!room.host, [...room.remotes.values()]);
+    send(room.host, toHost);
+    for (const r of room.remotes.keys()) send(r, toRemote);
   };
 
   httpServer.on('upgrade', (req: IncomingMessage, socket: Duplex, head: Buffer) => {
-    const url = new URL(req.url ?? '/', 'http://local');
-    if (url.pathname !== RELAY_PATH) return; // leave Vite HMR alone
+    if (new URL(req.url ?? '/', 'http://local').pathname !== RELAY_PATH) return; // leave Vite HMR alone
     wss.handleUpgrade(req, socket, head, (ws) => {
-      const code = (url.searchParams.get('room') ?? '').toUpperCase().slice(0, 12);
-      const role = url.searchParams.get('role');
-      if (!code || (role !== 'host' && role !== 'remote')) {
+      const params = parseParams(req.url ?? '/');
+      if (!params) {
         ws.close(1008, 'bad params');
         return;
       }
+      const { room: code, role, id } = params;
       const room = getRoom(code);
       alive.set(ws, true);
       ws.on('pong', () => alive.set(ws, true));
+      // oversized or malformed frames emit 'error'; unhandled, that would take down the server
+      ws.on('error', () => ws.terminate());
 
       if (role === 'host') {
         if (room.host && room.host !== ws) room.host.close(4000, 'replaced');
         room.host = ws;
         ws.on('message', (data, isBinary) => {
           if (isBinary) return;
-          const text = data.toString();
-          for (const r of room.remotes) send(r, text);
+          const out = fromHost(data.toString());
+          if (!out) return;
+          for (const [r, id] of room.remotes) if (!out.to || out.to === id) send(r, out.text);
         });
       } else {
-        room.remotes.add(ws);
+        room.remotes.set(ws, id);
         ws.on('message', (data, isBinary) => {
           if (isBinary) return;
-          send(room.host, data.toString());
+          const out = fromRemote(data.toString(), id);
+          if (out) send(room.host, out);
         });
       }
 

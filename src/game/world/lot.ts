@@ -1,12 +1,15 @@
 import * as THREE from 'three';
-import { RAPIER, G, groups, staticInstances, type Physics } from '../physics';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+import { RAPIER, G, groups, InstancedBodies, staticInstances, type Physics } from '../physics';
+import { BREAK, Breakables } from './breakables';
+import { Hedges } from './hedges';
 import { StaticBatch } from './batch';
 import { CAR_COLORS, ParkedCars, Props } from './dynamics';
 import { buildGarage, makeMaterials } from './garage';
 import { buildStuntYard, type StuntFeature } from './stuntPark';
 import { arrowTexture, asphaltTexture, fenceTexture, rng, signTexture } from './textures';
 import {
-  benchGeo, bollardGeo, hedgeGeo, lampGeo, propMaterial, propMaterialFlat, treeGeo,
+  benchGeo, bollardGeo, lampGeo, propMaterial, propMaterialFlat, treeGeo,
 } from '../models/props';
 
 export const LOT = { x0: -110, x1: 110, z0: -100, z1: 100, gateHalf: 7 };
@@ -16,6 +19,10 @@ export interface LotWorld {
   update(dt: number, playerPos: THREE.Vector3): void;
   parked: ParkedCars;
   props: Props;
+  /** Fences, lamp posts, flag poles and bollards that snap when hit hard. */
+  breakables: Breakables;
+  /** Soft hedges along the fence. */
+  hedges: Hedges;
   /** Named stunt launch spots. */
   features: StuntFeature[];
   /** Safe spawn point (y = ground) and heading. */
@@ -30,6 +37,8 @@ export function buildLot(scene: THREE.Scene, phys: Physics): LotWorld {
   scene.add(dynRoot);
   const parked = new ParkedCars(phys, dynRoot);
   const props = new Props(phys, dynRoot);
+  const breakables = new Breakables(phys);
+  const Y_AXIS = new THREE.Vector3(0, 1, 0);
 
   // --------------------------------------------------------- asphalt + paint
   const asphalt = asphaltTexture();
@@ -82,7 +91,6 @@ export function buildLot(scene: THREE.Scene, phys: Physics): LotWorld {
           batch.box({ x, y: 0.165, z: zc }, { x: stallW - 0.55, y: 0.01, z: depth * 2 - 0.65 }, grassMat, q, false);
           phys.staticBox({ x, y: 0.08, z: zc }, { x: (stallW - 0.3) / 2, y: 0.08, z: depth - 0.2 });
           lampMats.push(new THREE.Matrix4().compose(new THREE.Vector3(x, 0.16, zc), new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI / 2), new THREE.Vector3(1, 1, 1)));
-          phys.staticCylinder({ x, y: 4.2, z: zc }, 4, 0.16);
           for (const s of [-1, 1]) trees.push({ x, z: zc + s * 3.4, kind: (rand() * 3) | 0, s: 0.8 + rand() * 0.35, r: rand() * 6 });
           continue;
         }
@@ -141,26 +149,37 @@ export function buildLot(scene: THREE.Scene, phys: Physics): LotWorld {
   const fenceTex = fenceTexture();
   const fenceMat = new THREE.MeshStandardMaterial({ map: fenceTex, alphaTest: 0.5, side: THREE.DoubleSide, metalness: 0.6, roughness: 0.5, color: 0xdfe3e6 });
   const fenceH = 2.0;
+  // each run is split into post-to-post panels; every panel is its own breakable body
+  const fenceSets = new Map<string, InstancedBodies>();
+  const fencePanels: { len: number; pos: THREE.Vector3; rot: THREE.Quaternion }[] = [];
   const fenceRun = (x0: number, z0: number, x1: number, z1: number) => {
-    const len = Math.hypot(x1 - x0, z1 - z0);
+    const runLen = Math.hypot(x1 - x0, z1 - z0);
     const yaw = Math.atan2(x1 - x0, z1 - z0);
-    const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw);
-    const g = new THREE.PlaneGeometry(len, fenceH);
-    const uv = g.attributes.uv as THREE.BufferAttribute;
-    for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) * len * 6, uv.getY(i) * fenceH * 6);
-    const mesh = new THREE.Mesh(g, fenceMat);
-    mesh.position.set((x0 + x1) / 2, fenceH / 2, (z0 + z1) / 2);
-    mesh.rotation.y = yaw + Math.PI / 2;
-    mesh.castShadow = true;
-    scene.add(mesh);
-    phys.staticBox({ x: mesh.position.x, y: 1.2, z: mesh.position.z }, { x: 0.08, y: 1.2, z: len / 2 }, q, 0.3);
-    const posts = Math.ceil(len / 3);
-    for (let i = 0; i <= posts; i++) {
-      const t = i / posts;
-      batch.add(new THREE.CylinderGeometry(0.04, 0.04, fenceH + 0.1, 6), mats.metal,
-        new THREE.Matrix4().makeTranslation(x0 + (x1 - x0) * t, (fenceH + 0.1) / 2, z0 + (z1 - z0) * t), false);
+    // body space: x along the run, z across it (the panel's face normal)
+    const rot = new THREE.Quaternion().setFromAxisAngle(Y_AXIS, yaw + Math.PI / 2);
+    const n = Math.ceil(runLen / 3);
+    const len = runLen / n;
+    for (let i = 0; i < n; i++) {
+      const t = (i + 0.5) / n;
+      fencePanels.push({ len, pos: new THREE.Vector3(x0 + (x1 - x0) * t, 0, z0 + (z1 - z0) * t), rot });
     }
-    batch.box({ x: mesh.position.x, y: fenceH, z: mesh.position.z }, { x: 0.05, y: 0.05, z: len }, mats.metal, q, false);
+    // closing post at the far end of the run
+    batch.add(new THREE.CylinderGeometry(0.04, 0.04, fenceH + 0.1, 6), mats.metal, new THREE.Matrix4().makeTranslation(x1, (fenceH + 0.1) / 2, z1), false);
+  };
+  const fencePanelParts = (len: number) => {
+    const mesh = new THREE.PlaneGeometry(len, fenceH);
+    const uv = mesh.attributes.uv as THREE.BufferAttribute;
+    for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) * len * 6, uv.getY(i) * fenceH * 6);
+    mesh.translate(0, fenceH / 2, 0);
+    // the post at the panel's run-start end (body +x) and the top rail
+    const frame = mergeGeometries([
+      new THREE.CylinderGeometry(0.04, 0.04, fenceH + 0.1, 6).translate(len / 2, (fenceH + 0.1) / 2, 0),
+      new THREE.BoxGeometry(len, 0.05, 0.05).translate(0, fenceH, 0),
+    ])!;
+    return [
+      { geometry: mesh, material: fenceMat, receiveShadow: false },
+      { geometry: frame, material: mats.metal },
+    ];
   };
   const { x0, x1, z0, z1, gateHalf } = LOT;
   fenceRun(x0, z0, x1, z0);
@@ -168,9 +187,20 @@ export function buildLot(scene: THREE.Scene, phys: Physics): LotWorld {
   fenceRun(x1, z0, x1, z1);
   fenceRun(x0, z1, -gateHalf - 1.5, z1);
   fenceRun(gateHalf + 1.5, z1, x1, z1);
+  for (const panel of fencePanels) {
+    const key = panel.len.toFixed(3);
+    let set = fenceSets.get(key);
+    if (!set) {
+      set = new InstancedBodies(fencePanelParts(panel.len), fencePanels.filter((p) => p.len.toFixed(3) === key).length).addTo(scene);
+      fenceSets.set(key, set);
+    }
+    const s = set;
+    breakables.add(BREAK.fence, panel.pos, panel.rot,
+      { kind: 'box', center: new THREE.Vector3(0, 1.2, 0), half: new THREE.Vector3(panel.len / 2, 1.2, 0.08) },
+      (body) => ({ set: s, index: s.add(body) }));
+  }
 
   // hedges just inside the fence
-  const hedgeParts = hedgeGeo(6);
   const hedgeMats: THREE.Matrix4[] = [];
   for (let x = x0 + 4; x < x1 - 4; x += 6.2) {
     if (Math.abs(x) < 14) continue;
@@ -179,12 +209,8 @@ export function buildLot(scene: THREE.Scene, phys: Physics): LotWorld {
   for (let z = z0 + 6; z < z1 - 6; z += 6.2) {
     for (const x of [x0 + 1.6, x1 - 1.6]) hedgeMats.push(new THREE.Matrix4().compose(new THREE.Vector3(x, 0, z), new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI / 2), new THREE.Vector3(1, 1, 1)));
   }
-  scene.add(staticInstances([{ geometry: hedgeParts, material: propMaterialFlat }], hedgeMats));
-  for (const m of hedgeMats) {
-    const p = new THREE.Vector3().setFromMatrixPosition(m);
-    const q = new THREE.Quaternion().setFromRotationMatrix(m);
-    phys.staticBox({ x: p.x, y: 0.6, z: p.z }, { x: 3, y: 0.6, z: 0.6 }, q, 0.5);
-  }
+  // soft: no collider, cars plough through and shake leaves out (see hedges.ts)
+  const hedges = new Hedges(scene, hedgeMats);
 
   // ------------------------------------------------- entrance gate + plaza
   const arms: { body: RAPIER.RigidBody; mesh: THREE.Object3D; pivot: THREE.Vector3; dir: number; angle: number }[] = [];
@@ -240,25 +266,32 @@ export function buildLot(scene: THREE.Scene, phys: Physics): LotWorld {
   flagColors.forEach((col, i) => {
     const x = -24 + i * 5;
     const z = z1 - 8;
-    batch.add(new THREE.CylinderGeometry(0.06, 0.08, 9, 8), mats.metal, new THREE.Matrix4().makeTranslation(x, 4.5, z));
-    phys.staticCylinder({ x, y: 4.5, z }, 4.5, 0.08);
+    // pole + flag move together, origin at the foot of the pole
+    const pole = new THREE.Group();
+    const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.08, 9, 8), mats.metal);
+    shaft.position.y = 4.5;
+    shaft.castShadow = true;
     const geo = new THREE.PlaneGeometry(2.4, 1.4, 12, 4);
     geo.translate(1.2, 0, 0);
     const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: col, side: THREE.DoubleSide, roughness: 0.8 }));
-    mesh.position.set(x, 8.2, z);
+    mesh.position.set(0, 8.2, 0);
     mesh.rotation.y = 0.6;
     mesh.castShadow = true;
-    scene.add(mesh);
+    pole.add(shaft, mesh);
+    scene.add(pole);
+    breakables.add(BREAK.flagPole, new THREE.Vector3(x, 0, z), new THREE.Quaternion(),
+      { kind: 'cylinder', center: new THREE.Vector3(0, 4.5, 0), halfHeight: 4.5, radius: 0.08 }, () => ({ obj: pole }));
     flags.push({ geo, base: (geo.attributes.position.array as Float32Array).slice(), phase: i * 1.3 });
   });
 
   // plaza furniture
-  const bollards: THREE.Matrix4[] = [];
-  for (let x = -36; x <= 36; x += 3) if (Math.abs(x) > 16) bollards.push(new THREE.Matrix4().makeTranslation(x, 0, z1 - 14));
-  scene.add(staticInstances([{ geometry: bollardGeo(), material: propMaterial }], bollards));
-  for (const m of bollards) {
-    const p = new THREE.Vector3().setFromMatrixPosition(m);
-    phys.staticCylinder({ x: p.x, y: 0.45, z: p.z }, 0.45, 0.11);
+  const bollardXs: number[] = [];
+  for (let x = -36; x <= 36; x += 3) if (Math.abs(x) > 16) bollardXs.push(x);
+  const bollardSet = new InstancedBodies([{ geometry: bollardGeo(), material: propMaterial }], bollardXs.length).addTo(scene);
+  for (const x of bollardXs) {
+    breakables.add(BREAK.bollard, new THREE.Vector3(x, 0, z1 - 14), new THREE.Quaternion(),
+      { kind: 'cylinder', center: new THREE.Vector3(0, 0.45, 0), halfHeight: 0.45, radius: 0.11 },
+      (body) => ({ set: bollardSet, index: bollardSet.add(body) }));
   }
   const benches = [-40, -34, 34, 40].map((x) => new THREE.Matrix4().compose(new THREE.Vector3(x, 0, z1 - 4), new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI), new THREE.Vector3(1, 1, 1)));
   scene.add(staticInstances([{ geometry: benchGeo(), material: propMaterial }], benches));
@@ -280,10 +313,18 @@ export function buildLot(scene: THREE.Scene, phys: Physics): LotWorld {
   for (const t of trees) phys.staticCylinder({ x: t.x, y: 1.5, z: t.z }, 1.5, 0.2 * t.s);
 
   // lamps
-  scene.add(staticInstances([
+  const lampSet = new InstancedBodies([
     { geometry: lamp.body, material: propMaterial },
     { geometry: lamp.heads, material: new THREE.MeshStandardMaterial({ vertexColors: true, emissive: 0xfff4e0, emissiveIntensity: 0.6 }), castShadow: false },
-  ], lampMats));
+  ], lampMats.length).addTo(scene);
+  for (const m of lampMats) {
+    const pos = new THREE.Vector3();
+    const rot = new THREE.Quaternion();
+    m.decompose(pos, rot, new THREE.Vector3());
+    breakables.add(BREAK.lamp, pos, rot,
+      { kind: 'cylinder', center: new THREE.Vector3(0, 4, 0), halfHeight: 4, radius: 0.2 },
+      (body) => ({ set: lampSet, index: lampSet.add(body) }));
+  }
 
   // ------------------------------------------------------- perimeter road
   const roadMat = new THREE.MeshStandardMaterial({ map: asphalt.clone(), roughness: 0.9, color: 0xc8c8c8 });
@@ -359,6 +400,8 @@ export function buildLot(scene: THREE.Scene, phys: Physics): LotWorld {
   return {
     parked,
     props,
+    breakables,
+    hedges,
     features,
     spawn: { x: 6, y: 0, z: 46, yaw: Math.PI },
     update(dt, p) {

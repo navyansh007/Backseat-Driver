@@ -2,6 +2,8 @@ import * as THREE from 'three';
 import { RAPIER, type Physics } from '../physics';
 import type { Entry } from '../world/dynamics';
 import type { CombatFx } from './fx';
+import type { WreckFx } from './wreck';
+import { SPECS } from '../models/carModel';
 
 const HP: Record<string, number> = {
   cone: 6, barrel: 22, barrelBlue: 40, box: 8, boxBig: 12, trolley: 30, bin: 22, binBlue: 22,
@@ -61,6 +63,7 @@ export class Destruction {
     private fx: CombatFx,
     private player: RAPIER.RigidBody,
     private hooks: DestructionHooks,
+    private wreck: WreckFx,
   ) {
     for (const e of entries) {
       const t = e.body.translation();
@@ -109,6 +112,14 @@ export class Destruction {
     const t = d.body.translation();
     const c = new THREE.Vector3(t.x, t.y, t.z);
     if (d.car) {
+      // break it apart before the blast impulse so the pieces inherit the car's own motion
+      const spec = SPECS[d.kind];
+      const r = d.body.rotation();
+      const v = d.body.linvel();
+      this.wreck.carExplode(
+        c, new THREE.Quaternion(r.x, r.y, r.z, r.w), new THREE.Vector3(v.x, v.y, v.z),
+        new THREE.Vector3(spec?.W ?? 1.8, spec?.H ?? 1.45, spec?.L ?? 4.5), d.color, this.floorAt(c),
+      );
       if (d.kinematic) {
         d.body.setBodyType(RAPIER.RigidBodyType.Dynamic, true);
         this.hooks.onTrafficDestroyed(d.body);
@@ -117,8 +128,6 @@ export class Destruction {
       const mass = d.body.mass();
       d.body.applyImpulse({ x: (Math.random() - 0.5) * mass * 2, y: mass * 7, z: (Math.random() - 0.5) * mass * 2 }, true);
       d.body.applyTorqueImpulse({ x: (Math.random() - 0.5) * mass * 6, y: (Math.random() - 0.5) * mass * 2, z: (Math.random() - 0.5) * mass * 6 }, true);
-      this.fx.debris.burst(c.clone().setY(c.y + 1), 14, d.color, 2.2, 11, this.floorAt(c));
-      this.fx.debris.burst(c.clone().setY(c.y + 1), 8, new THREE.Color(0x222222), 1.6, 9, this.floorAt(c));
       d.burnUntil = this.time + 16;
       this.burning.add(d);
       this.queueBlast(c.setY(c.y + 0.8), 7, 32, 8, 1.1, 0); // weak damage so wrecks rarely chain through a whole row

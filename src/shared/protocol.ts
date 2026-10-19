@@ -34,20 +34,44 @@ export interface HitMsg {
   power: number;
 }
 
-/** Sent by the relay server. */
+/** Sent by the relay server. `ids` (host only) lists the phones currently in the room. */
 export interface PeerMsg {
   t: 'peer';
   role: 'host' | 'remote';
   online: boolean;
   count: number;
+  ids?: string[];
 }
 
-export type RemoteToHost = InputMsg;
-export type HostToRemote = TelemetryMsg | HitMsg;
+/**
+ * WebRTC handshake, carried by the relay. The relay stamps `from` on messages a phone sends;
+ * the host addresses a phone with `to`. Any host message with `to` goes to that phone only.
+ */
+export interface SignalMsg {
+  t: 'sig';
+  sdp?: { type: 'offer' | 'answer'; sdp: string };
+  /** a trickled ICE candidate (RTCIceCandidateInit); null marks the end of gathering */
+  ice?: { candidate?: string; sdpMid?: string | null; sdpMLineIndex?: number | null; usernameFragment?: string | null } | null;
+  from?: string;
+  to?: string;
+}
+
+export type RemoteToHost = InputMsg | SignalMsg;
+export type HostToRemote = (TelemetryMsg | HitMsg | SignalMsg) & { to?: string };
 export type RelayMsg = PeerMsg;
 
 export const RELAY_PATH = '/relay';
 export const LAN_ENDPOINT = '/api/lan';
+/** Relay frames larger than this are dropped (SDP offers are ~1–3 KB). */
+export const MAX_FRAME = 16384;
+
+/** Public STUN servers used to find a direct path between phone and game. */
+export const ICE_SERVERS: { urls: string[] }[] = [
+  { urls: ['stun:stun.cloudflare.com:3478', 'stun:stun.l.google.com:19302'] },
+];
+/** Data channel for input + telemetry: unordered, no retransmits — a stale packet is useless. */
+export const CHANNEL_LABEL = 'rc';
+export const CHANNEL_OPTS = { ordered: false, maxRetransmits: 0 };
 
 export function makeRoomCode(): string {
   const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';

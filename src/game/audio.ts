@@ -160,6 +160,32 @@ export class CarAudio {
     this.windGain.gain.setTargetAtTime(Math.min(0.25, (speed / 35) ** 2 * 0.25), t, 0.2);
   }
 
+  /** Leaves and twigs scraping along the bodywork when driving through a hedge. */
+  rustle(power: number) {
+    if (!this.ctx) return;
+    const ctx = this.ctx;
+    const t = ctx.currentTime;
+    const src = ctx.createBufferSource();
+    src.buffer = this.noise;
+    src.playbackRate.value = 0.8 + Math.random() * 0.5;
+    const bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.value = 1800 + Math.random() * 1400 + power * 1200;
+    bp.Q.value = 0.8;
+    const hp = ctx.createBiquadFilter();
+    hp.type = 'highpass';
+    hp.frequency.value = 700;
+    const g = ctx.createGain();
+    const v = Math.min(0.5, 0.08 + power * 0.4);
+    const len = 0.18 + power * 0.25;
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(v, t + 0.025);
+    g.gain.exponentialRampToValueAtTime(0.001, t + len);
+    src.connect(bp).connect(hp).connect(g).connect(this.sfx);
+    src.start(t, Math.random());
+    src.stop(t + len + 0.05);
+  }
+
   impact(power: number) {
     if (!this.ctx) return;
     const ctx = this.ctx;

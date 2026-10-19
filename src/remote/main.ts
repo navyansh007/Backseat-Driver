@@ -1,5 +1,8 @@
 import '../styles/remote.css';
-import { RELAY_PATH, type HostToRemote, type InputMsg, type RelayMsg } from '../shared/protocol';
+import {
+  CHANNEL_LABEL, CHANNEL_OPTS, ICE_SERVERS, RELAY_PATH,
+  type HostToRemote, type InputMsg, type RelayMsg, type SignalMsg,
+} from '../shared/protocol';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const device = $<HTMLElement>('device');
@@ -25,8 +28,66 @@ function setStatus(kind: 'wait' | 'ok' | 'bad', text: string) {
 }
 
 // ---------------------------------------------------------------- connection
+// The relay socket pairs us with the game and carries the WebRTC handshake. Once the
+// direct data channel opens, input and telemetry go peer-to-peer; until then (or if a
+// direct path can't be found) they travel over the relay. `?p2p=0` forces relay mode.
+const P2P = typeof RTCPeerConnection !== 'undefined' && new URLSearchParams(location.search).get('p2p') !== '0';
 let ws: WebSocket | null = null;
 let retry = 0;
+let hostOnline = false;
+let pc: RTCPeerConnection | null = null;
+let dc: RTCDataChannel | null = null;
+let pcReady: Promise<unknown> = Promise.resolve();
+let p2pRetry = 0;
+let p2pTimer = 0;
+const peerId = (() => {
+  const make = () => Array.from(crypto.getRandomValues(new Uint8Array(4)), (b) => b.toString(16).padStart(2, '0')).join('');
+  try {
+    const id = sessionStorage.getItem('rc-peer') ?? make();
+    sessionStorage.setItem('rc-peer', id);
+    return id;
+  } catch {
+    return make();
+  }
+})();
+
+const direct = () => dc?.readyState === 'open';
+const relayOpen = () => ws?.readyState === WebSocket.OPEN;
+
+function refreshStatus() {
+  if (direct()) setStatus('ok', `${room} direct`);
+  else if (!relayOpen()) setStatus('bad', 'reconnecting');
+  else if (hostOnline) setStatus('ok', `${room} relay`);
+  else setStatus('wait', 'no game');
+}
+
+function onHostMsg(msg: HostToRemote | RelayMsg) {
+  if (msg.t === 'peer') {
+    hostOnline = msg.online;
+    if (hostOnline) startP2P();
+    else stopP2P();
+    refreshStatus();
+  } else if (msg.t === 'sig') {
+    void onSignal(msg);
+  } else if (msg.t === 'tele') {
+    speedEl.textContent = String(Math.min(999, Math.round(msg.kmh))).padStart(3, '0');
+    gearEl.textContent = msg.gear;
+    if (msg.msl !== undefined) {
+      pips.forEach((p, i) => p.classList.toggle('on', i < msg.msl!));
+      mslBtn.classList.toggle('empty', msg.msl === 0);
+    }
+    if (msg.heat !== undefined) heatEl.style.width = `${Math.round(msg.heat * 100)}%`;
+    heatEl.parentElement!.classList.toggle('hot', !!msg.hot);
+    lockEl.classList.toggle('on', !!msg.lock);
+  } else if (msg.t === 'hit') {
+    buzz(Math.min(140, 20 + msg.power * 110));
+    if (msg.power > 0.15) {
+      device.classList.remove('shake');
+      void device.offsetWidth;
+      device.classList.add('shake');
+    }
+  }
+}
 
 function connect() {
   if (!room) {
@@ -34,39 +95,88 @@ function connect() {
     return;
   }
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  ws = new WebSocket(`${proto}://${location.host}${RELAY_PATH}?role=remote&room=${encodeURIComponent(room)}`);
-  setStatus('wait', 'linking');
+  ws = new WebSocket(`${proto}://${location.host}${RELAY_PATH}?role=remote&room=${encodeURIComponent(room)}&id=${peerId}`);
+  if (!direct()) setStatus('wait', 'linking');
   ws.onopen = () => {
     retry = 0;
   };
-  ws.onmessage = (ev) => {
-    const msg = JSON.parse(ev.data as string) as HostToRemote | RelayMsg;
-    if (msg.t === 'peer') {
-      setStatus(msg.online ? 'ok' : 'wait', msg.online ? `linked ${room}` : 'no game');
-    } else if (msg.t === 'tele') {
-      speedEl.textContent = String(Math.min(999, Math.round(msg.kmh))).padStart(3, '0');
-      gearEl.textContent = msg.gear;
-      if (msg.msl !== undefined) {
-        pips.forEach((p, i) => p.classList.toggle('on', i < msg.msl!));
-        mslBtn.classList.toggle('empty', msg.msl === 0);
-      }
-      if (msg.heat !== undefined) heatEl.style.width = `${Math.round(msg.heat * 100)}%`;
-      heatEl.parentElement!.classList.toggle('hot', !!msg.hot);
-      lockEl.classList.toggle('on', !!msg.lock);
-    } else if (msg.t === 'hit') {
-      buzz(Math.min(140, 20 + msg.power * 110));
-      if (msg.power > 0.15) {
-        device.classList.remove('shake');
-        void device.offsetWidth;
-        device.classList.add('shake');
-      }
-    }
-  };
+  ws.onmessage = (ev) => onHostMsg(JSON.parse(ev.data as string) as HostToRemote | RelayMsg);
   ws.onclose = () => {
-    setStatus('bad', 'reconnecting');
+    // a direct link survives the relay dropping; the new relay session re-pairs anyway
+    refreshStatus();
     setTimeout(connect, Math.min(4000, 400 * 2 ** retry++));
   };
 }
+
+function relaySend(msg: object) {
+  if (relayOpen()) ws!.send(JSON.stringify(msg));
+}
+
+function startP2P() {
+  if (!P2P || pc || p2pTimer) return;
+  const conn = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+  const chan = conn.createDataChannel(CHANNEL_LABEL, CHANNEL_OPTS);
+  pc = conn;
+  dc = chan;
+  pcReady = new Promise(() => {}); // until the answer lands
+  conn.onicecandidate = (e) => relaySend({ t: 'sig', ice: e.candidate ? e.candidate.toJSON() : null });
+  conn.onconnectionstatechange = () => {
+    if (pc === conn && (conn.connectionState === 'failed' || conn.connectionState === 'closed')) retryP2P();
+  };
+  chan.onopen = () => {
+    p2pRetry = 0;
+    dirty = true;
+    refreshStatus();
+  };
+  chan.onclose = () => {
+    if (pc === conn) retryP2P();
+  };
+  chan.onmessage = (ev) => {
+    try { onHostMsg(JSON.parse(ev.data as string) as HostToRemote); } catch { /* ignore */ }
+  };
+  void (async () => {
+    await conn.setLocalDescription(await conn.createOffer());
+    const local = conn.localDescription!;
+    relaySend({ t: 'sig', sdp: { type: 'offer', sdp: local.sdp } });
+  })().catch(retryP2P);
+  // no direct link after a while: stay on the relay and try again later
+  setTimeout(() => {
+    if (pc === conn && !direct()) retryP2P();
+  }, 12000);
+}
+
+async function onSignal(msg: SignalMsg) {
+  const conn = pc;
+  if (!conn) return;
+  if (msg.sdp?.type === 'answer') {
+    pcReady = conn.setRemoteDescription(msg.sdp);
+    await pcReady.catch(retryP2P);
+  } else if (msg.ice) {
+    try { await pcReady; } catch { return; }
+    if (pc === conn) conn.addIceCandidate(msg.ice).catch(() => { /* stale candidate */ });
+  }
+}
+
+function stopP2P() {
+  const conn = pc;
+  pc = null;
+  dc = null;
+  conn?.close();
+  clearTimeout(p2pTimer);
+  p2pTimer = 0;
+}
+
+function retryP2P() {
+  stopP2P();
+  refreshStatus();
+  if (!hostOnline) return;
+  const delay = Math.min(30000, 2000 * 2 ** p2pRetry++);
+  p2pTimer = window.setTimeout(() => {
+    p2pTimer = 0;
+    if (hostOnline && relayOpen()) startP2P();
+  }, delay);
+}
+
 connect();
 
 // ---------------------------------------------------------------- state
@@ -168,15 +278,22 @@ document.addEventListener('gesturestart', (e) => e.preventDefault());
 document.addEventListener('contextmenu', (e) => e.preventDefault());
 
 // ---------------------------------------------------------------- send loop
-// ~40 Hz while anything is held, plus a slow keepalive so the game can detect a stalled link.
+// Direct link: ~40 Hz while anything is held, repeated briefly after every change (the
+// channel drops late packets rather than resending them). Relay: ~30 Hz. Plus a slow
+// keepalive either way so the game can detect a stalled link.
 let lastSend = 0;
+let lastChange = 0;
 function pump(now: number) {
   requestAnimationFrame(pump);
-  if (!ws || ws.readyState !== WebSocket.OPEN) return;
-  const busy = state.a || state.g;
-  const interval = busy ? 25 : 250;
+  const p2p = direct();
+  if (!p2p && !relayOpen()) return;
+  if (dirty) lastChange = now;
+  const busy = state.a || state.g || now - lastChange < 200;
+  const interval = busy ? (p2p ? 25 : 33) : 250;
   if ((dirty && now - lastSend > 16) || now - lastSend > interval) {
-    ws.send(JSON.stringify({ t: 'in', x: +state.x.toFixed(3), y: +state.y.toFixed(3), a: state.a, g: state.g, m: state.m }));
+    const text = JSON.stringify({ t: 'in', x: +state.x.toFixed(3), y: +state.y.toFixed(3), a: state.a, g: state.g, m: state.m });
+    if (p2p) dc!.send(text);
+    else ws!.send(text);
     lastSend = now;
     dirty = false;
   }

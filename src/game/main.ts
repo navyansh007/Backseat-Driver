@@ -13,6 +13,7 @@ import { Controls } from './input';
 import { MusicDirector } from './music';
 import { CombatFx } from './combat/fx';
 import { Destruction } from './combat/destruction';
+import { WreckFx } from './combat/wreck';
 import { Weapons } from './combat/weapons';
 import { StuntDirector } from './stunts';
 
@@ -21,7 +22,7 @@ const ui = {
   loading: $('loading'), loadingText: $('loading-text'), title: $('title'), hud: $('hud'), brand: $('brand'),
   speed: $('speed'), gear: $('gear'), chip: $('link-chip'), chipText: $('link-text'), hints: $('hints'),
   soundNote: $('sound-note'), toast: $('toast'), qr: $<HTMLCanvasElement>('qr'), qrUrl: $<HTMLAnchorElement>('qr-url'),
-  room: $('room-code'), qrDot: $('qr-dot'), qrStatus: $('qr-status'), kbStart: $('kb-start'),
+  room: $('room-code'), lanNote: $('lan-note'), qrDot: $('qr-dot'), qrStatus: $('qr-status'), kbStart: $('kb-start'),
   lock: $('lock'), heat: $('heat-fill'), heatBox: $('heat'), pips: $('pips'),
   letterbox: $('letterbox'), card: $('stunt-card'), cardTitle: $('stunt-title'), cardTags: $('stunt-tags'),
   cardStats: $('stunt-stats'), cardPoints: $('stunt-points'),
@@ -55,6 +56,9 @@ async function boot() {
   void link.drawQR(ui.qr, 260).then((url) => {
     ui.qrUrl.textContent = url.replace(/^https?:\/\//, '');
     ui.qrUrl.href = url;
+    // a LAN address only works on the same network; a public URL works from anywhere
+    const lan = /^(10|127|192\.168|172\.(1[6-9]|2\d|3[01]))\./.test(new URL(url).hostname);
+    ui.lanNote.textContent = lan ? 'phone and computer must be on the same wi-fi' : 'same wi-fi is fastest · mobile data works too';
   });
 
   ui.loadingText.textContent = 'starting the physics engine…';
@@ -82,6 +86,7 @@ async function boot() {
 
   // ------------------------------------------------------------ combat
   const fx = new CombatFx(scene);
+  const wreck = new WreckFx(scene, phys, fx);
   const destruction = new Destruction([...lot.parked.entries, ...lot.props.entries], phys, fx, car.body, {
     onExplosion(p, scale) {
       const dist = p.distanceTo(car.position);
@@ -92,7 +97,7 @@ async function boot() {
     },
     onTrafficDestroyed: (body) => life.trafficDestroyed(body),
     onTrafficRespawn: (body) => life.trafficRespawn(body),
-  });
+  }, wreck);
   // driving assist level, remembered per browser
   const ASSIST_LEVELS = [
     { name: 'off', value: 0 },
@@ -111,6 +116,32 @@ async function boot() {
     car.sim.assist = ASSIST_LEVELS[assistIdx].value;
     try { localStorage.setItem('tnd-assist', String(assistIdx)); } catch { /* ignore */ }
     toast(`steering assist: ${ASSIST_LEVELS[assistIdx].name}`, 1600);
+  };
+
+  // fences, lamp posts, flag poles and bollards snapping under a hard hit
+  lot.breakables.hooks = {
+    onBreak(point, normal, power, def, hitter) {
+      const color = new THREE.Color(def.color);
+      fx.impactSparks(point, normal, 3 + Math.round(power * 8));
+      fx.debris.burst(point, 3 + Math.round(power * 6), color, 0.35, 3 + power * 6, 0);
+      if (hitter.handle !== car.body.handle) return;
+      audio.impact(0.25 + power * 0.6);
+      cam.bump(0.15 + power * 0.5);
+      link.send({ t: 'hit', power: Math.min(1, 0.2 + power * 0.6) });
+    },
+  };
+
+  // soft hedges: the player and any shoved parked car push through them
+  const hedgeMovers = [
+    { body: car.body, halfLength: 1.8, radius: 0.95, drag: true },
+    ...lot.parked.entries.filter((e) => !e.kinematic).map((e) => ({ body: e.body, halfLength: 1.6, radius: 0.85, drag: true })),
+  ];
+  lot.hedges.hooks = {
+    onRustle(power, entering, body) {
+      const mine = body.handle === car.body.handle;
+      audio.rustle(mine ? power : power * 0.5);
+      if (mine && entering) link.send({ t: 'hit', power: Math.min(0.35, power * 0.5) });
+    },
   };
 
   const weapons = new Weapons(scene, car, phys, fx, destruction, {
@@ -170,6 +201,7 @@ async function boot() {
     const ok = n > 0;
     ui.chip.classList.toggle('ok', ok);
     ui.chipText.textContent = ok ? (n > 1 ? `${n} phones linked` : 'phone linked') : 'no phone';
+    ui.chip.title = ok ? `${link.direct} of ${n} on a direct link · show pairing code (Q)` : 'Show pairing code (Q)';
     ui.qrDot.classList.toggle('ok', ok);
     ui.qrStatus.textContent = ok ? 'phone linked · touch the pad to drive' : 'waiting for phone';
   };
@@ -252,12 +284,14 @@ async function boot() {
     let steps = 0;
     while (acc >= STEP && steps < 5) {
       car.drive(STEP, input);
+      lot.breakables.preStep(car.body, car.sim.chassisColliders[0]);
       phys.step();
       car.capture();
       stunts.postStep(STEP, playing);
       acc -= STEP;
       steps++;
       phys.events.drainContactForceEvents((ev) => {
+        lot.breakables.onContactForce(ev);
         if (!playerHandles.has(ev.collider1()) && !playerHandles.has(ev.collider2())) return;
         const f = ev.totalForceMagnitude();
         const power = Math.min(1, (f - 9000) / 160000);
@@ -271,6 +305,8 @@ async function boot() {
     if (steps === 5) acc = 0;
 
     phys.sync();
+    lot.breakables.update(gdt, cam.camera, car.position);
+    lot.hedges.update(gdt, hedgeMovers);
     car.render(acc / STEP, dt);
     lot.update(gdt, car.position);
     life.update(gdt, car.position);
@@ -344,6 +380,7 @@ async function boot() {
     }
     destruction.update(gdt, cam.camera, car.position);
     fx.update(gdt);
+    wreck.update(gdt);
     updateCombatHud();
     env.follow(car.position);
     renderer.render(scene, cam.camera);
@@ -351,8 +388,18 @@ async function boot() {
   // lock-on bracket + weapon readouts
   const lockPos = new THREE.Vector3();
   let lastMsl = -1;
+  let lastLock = -1;
   function updateCombatHud() {
     const target = weapons.lock;
+    const handle = target && playing ? target.handle : -1;
+    if (handle !== lastLock) {
+      lastLock = handle;
+      ui.lock.classList.remove('acquire');
+      if (handle >= 0) {
+        void ui.lock.offsetWidth; // restart the settle animation for the new target
+        ui.lock.classList.add('acquire');
+      }
+    }
     if (target && playing) {
       const t = target.translation();
       lockPos.set(t.x, t.y + 0.8, t.z).project(cam.camera);

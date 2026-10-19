@@ -1,0 +1,18 @@
+{
+  // Cloudflare Worker: serves dist/ and runs the phone relay (worker/index.ts).
+  // Deploy with `npm run deploy` (builds first). Everything used here is on the free plan.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "backseat-driver",
+  "main": "worker/index.ts",
+  "compatibility_date": "2025-09-01",
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS"
+  },
+  "durable_objects": {
+    "bindings": [{ "name": "ROOMS", "class_name": "Room" }]
+  },
+  // Free-plan Durable Objects must use the SQLite storage backend.
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Room"] }],
+  "observability": { "enabled": true }
+}

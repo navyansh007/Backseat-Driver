@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { RAPIER, type Physics } from '../physics';
+import { RAPIER, G, groups, type Physics } from '../physics';
 import type { PlayerCar } from '../playerCar';
 import { TUNING } from '../vehiclePhysics';
 import type { CombatFx } from './fx';
@@ -23,6 +23,8 @@ const MAX_MISSILES = 4;
 const RELOAD = 5;
 const LOCK_RANGE = 150;
 const LOCK_ANGLE = 0.32;
+/** Line-of-sight rays stop on world geometry (walls, fences, pillars) and other cars; loose props don't block. */
+const SIGHT_GROUPS = groups(0xffff, G.WORLD | G.CAR);
 
 interface Missile {
   obj: THREE.Group;
@@ -129,7 +131,7 @@ export class Weapons {
     if (active) {
       const fwd = this.forward();
       const p = this.car.position;
-      let best = Infinity;
+      const candidates: { body: RAPIER.RigidBody; score: number }[] = [];
       for (const body of this.destruction.cars()) {
         const t = body.translation();
         this.tmp.set(t.x - p.x, t.y - p.y, t.z - p.z);
@@ -137,10 +139,14 @@ export class Weapons {
         if (d < 6 || d > LOCK_RANGE) continue;
         const ang = this.tmp.divideScalar(d).angleTo(fwd);
         if (ang > LOCK_ANGLE) continue;
-        const score = ang * 40 + d * 0.15;
-        if (score < best) {
-          best = score;
-          this.lock = body;
+        candidates.push({ body, score: ang * 40 + d * 0.15 });
+      }
+      // best-scoring car the launcher can actually see
+      candidates.sort((a, b) => a.score - b.score);
+      for (const c of candidates) {
+        if (this.inSight(c.body)) {
+          this.lock = c.body;
+          break;
         }
       }
     }
@@ -188,6 +194,18 @@ export class Weapons {
     this.launcher.visible = this.launcherUp > 0.02;
 
     for (const m of this.pool) if (m.active) this.stepMissile(m, dt);
+  }
+
+  /** True when nothing solid sits between the roof launcher and the target's body. */
+  private inSight(target: RAPIER.RigidBody) {
+    const root = this.car.root;
+    const from = new THREE.Vector3(0, 1.3 - TUNING.rideHeight + 0.3, 0).applyQuaternion(root.quaternion).add(root.position);
+    const t = target.translation();
+    const dir = new THREE.Vector3(t.x, t.y + 0.7, t.z).sub(from);
+    const len = dir.length();
+    dir.divideScalar(len);
+    const hit = this.phys.world.castRay(new RAPIER.Ray(from, dir), len, true, undefined, SIGHT_GROUPS, undefined, this.car.body);
+    return !hit || hit.collider.parent()?.handle === target.handle;
   }
 
   private fireGun() {

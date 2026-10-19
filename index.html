@@ -5,6 +5,15 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="theme-color" content="#cfdde3" />
     <title>Backseat Driver</title>
+    <meta name="description" content="A browser driving game where your phone is the remote control. Scan the code, then drive, drift and fire missiles through a multi-storey car park." />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="Backseat Driver" />
+    <meta property="og:description" content="Your phone is the remote. Drive, drift and fire missiles through a multi-storey car park, right in your browser." />
+    <meta property="og:image" content="/og.jpg" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta name="twitter:card" content="summary_large_image" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;600&display=swap" />
   </head>
@@ -38,7 +47,7 @@
         <canvas id="qr"></canvas>
         <div class="room">room <b id="room-code">—</b></div>
         <a class="url" id="qr-url" target="_blank" rel="noopener"></a>
-        <p class="lan-note">phone and computer must be on the same wi-fi</p>
+        <p class="lan-note" id="lan-note">same wi-fi is fastest · mobile data works too</p>
       </div>
     </section>
 
@@ -48,7 +57,7 @@
         <div class="heat" id="heat"><span>gun</span><div class="bar"><div id="heat-fill"></div></div></div>
         <div class="msl"><span>msl</span><div class="pips" id="pips"></div></div>
       </div>
-      <div class="lock hidden" id="lock"><span>lock</span></div>
+      <div class="lock hidden" id="lock"><svg viewBox="0 0 64 64" aria-hidden="true"><circle cx="32" cy="32" r="17" /><path d="M32 4v9M32 51v9M4 32h9M51 32h9" /><circle class="pip" cx="32" cy="32" r="1.6" /></svg><span>lock</span></div>
       <button class="link-chip" id="link-chip" title="Show pairing code (Q)">
         <svg viewBox="0 0 24 24" width="14" height="14"><rect x="6" y="2" width="12" height="20" rx="2.5" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="18" r="1.2" fill="currentColor"/></svg>
         <span id="link-text">no phone</span>
