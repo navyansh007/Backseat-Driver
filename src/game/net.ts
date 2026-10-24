@@ -1,7 +1,7 @@
 import QRCode from 'qrcode';
 import {
   ICE_SERVERS, LAN_ENDPOINT, RELAY_PATH, makeRoomCode,
-  type HostToRemote, type RelayMsg, type RemoteToHost, type SignalMsg,
+  type CommandMsg, type HostToRemote, type RelayMsg, type RemoteToHost, type SignalMsg,
 } from '../shared/protocol';
 
 export interface RemoteState {
@@ -30,6 +30,10 @@ export class RemoteLink {
   readonly state: RemoteState = { x: 0, y: 0, active: false, gun: false, missileSeq: 0, lastSeen: 0 };
   phones = 0;
   onPeers: (count: number) => void = () => {};
+  /** a phone sent a command (each one is delivered once, whichever path it came over) */
+  onCommand: (cmd: CommandMsg) => void = () => {};
+  /** recently seen command ids */
+  private seen = new Set<string>();
   private ws: WebSocket | null = null;
   private retry = 0;
   /** phone ids the relay reports in the room */
@@ -95,6 +99,13 @@ export class RemoteLink {
   }
 
   private onInput(msg: RemoteToHost) {
+    if (msg.t === 'cmd') {
+      if (typeof msg.id !== 'string' || this.seen.has(msg.id)) return;
+      this.seen.add(msg.id);
+      if (this.seen.size > 256) this.seen.delete(this.seen.values().next().value!);
+      this.onCommand(msg);
+      return;
+    }
     if (msg.t !== 'in') return;
     this.state.x = clamp(msg.x);
     this.state.y = clamp(msg.y);

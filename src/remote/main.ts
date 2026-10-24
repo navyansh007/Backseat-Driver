@@ -1,8 +1,9 @@
 import '../styles/remote.css';
 import {
-  CHANNEL_LABEL, CHANNEL_OPTS, ICE_SERVERS, RELAY_PATH,
-  type HostToRemote, type InputMsg, type RelayMsg, type SignalMsg,
+  CAM_VIEWS, CHANNEL_LABEL, CHANNEL_OPTS, ICE_SERVERS, RELAY_PATH,
+  type CommandMsg, type HostToRemote, type InputMsg, type RelayMsg, type SignalMsg,
 } from '../shared/protocol';
+import { SettingsPanel } from './settings';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const device = $<HTMLElement>('device');
@@ -18,6 +19,10 @@ const gunBtn = $<HTMLButtonElement>('gun');
 const mslBtn = $<HTMLButtonElement>('msl');
 const heatEl = $<HTMLElement>('heat');
 const pips = Array.from($<HTMLDivElement>('pips').children) as HTMLElement[];
+const camKey = $<HTMLButtonElement>('k-cam');
+const camKeyValue = $<HTMLElement>('k-cam-v');
+const resetKey = $<HTMLButtonElement>('k-reset');
+const setupKey = $<HTMLButtonElement>('k-setup');
 
 const room = new URLSearchParams(location.search).get('room');
 const buzz = (ms: number) => navigator.vibrate?.(ms);
@@ -55,6 +60,7 @@ const direct = () => dc?.readyState === 'open';
 const relayOpen = () => ws?.readyState === WebSocket.OPEN;
 
 function refreshStatus() {
+  panel.setOnline(direct() || (relayOpen() && hostOnline));
   if (direct()) setStatus('ok', `${room} direct`);
   else if (!relayOpen()) setStatus('bad', 'reconnecting');
   else if (hostOnline) setStatus('ok', `${room} relay`);
@@ -79,6 +85,9 @@ function onHostMsg(msg: HostToRemote | RelayMsg) {
     if (msg.heat !== undefined) heatEl.style.width = `${Math.round(msg.heat * 100)}%`;
     heatEl.parentElement!.classList.toggle('hot', !!msg.hot);
     lockEl.classList.toggle('on', !!msg.lock);
+  } else if (msg.t === 'cfg') {
+    panel.update(msg);
+    showCam();
   } else if (msg.t === 'hit') {
     buzz(Math.min(140, 20 + msg.power * 110));
     if (msg.power > 0.15) {
@@ -177,6 +186,20 @@ function retryP2P() {
   }, delay);
 }
 
+// Commands go over both paths: the direct channel may drop a packet, the relay may be
+// down. The game acts on each id once.
+let cmdSeq = 0;
+const cmdBase = `${peerId}-${Date.now().toString(36)}`;
+type Command = CommandMsg extends infer T ? (T extends unknown ? Omit<T, 't' | 'id'> : never) : never;
+function sendCommand(cmd: Command) {
+  const text = JSON.stringify({ t: 'cmd', id: `${cmdBase}-${++cmdSeq}`, ...cmd });
+  if (direct()) dc!.send(text);
+  if (relayOpen()) ws!.send(text);
+}
+
+// ---------------------------------------------------------------- settings
+const panel = new SettingsPanel($('sheet'), $('sheet-body'), sendCommand, buzz);
+
 connect();
 
 // ---------------------------------------------------------------- state
@@ -273,7 +296,46 @@ for (const type of ['pointerup', 'pointercancel', 'pointerleave'] as const) {
   mslBtn.addEventListener(type, () => mslBtn.classList.remove('down'));
 }
 
-document.addEventListener('touchmove', (e) => e.preventDefault(), { passive: false });
+// ---------------------------------------------------------------- quick keys
+function showCam() {
+  const v = panel.value('cam');
+  if (v) camKeyValue.textContent = v;
+}
+function quickKey(btn: HTMLButtonElement, fn: () => void) {
+  btn.addEventListener('pointerdown', (e) => {
+    btn.classList.add('down');
+    buzz(12);
+    fn();
+    e.preventDefault();
+  });
+  for (const type of ['pointerup', 'pointercancel', 'pointerleave'] as const) {
+    btn.addEventListener(type, () => btn.classList.remove('down'));
+  }
+}
+quickKey(camKey, () => {
+  const v = panel.value('cam');
+  if (!v) return;
+  panel.set('cam', CAM_VIEWS[(CAM_VIEWS.indexOf(v) + 1) % CAM_VIEWS.length]);
+  showCam();
+});
+quickKey(resetKey, () => sendCommand({ c: 'reset' }));
+quickKey(setupKey, () => panel.open());
+// the sheet covers the pad and fire buttons: let go of them
+panel.onOpen = () => {
+  if (padPointer !== null) releasePad();
+  if (gunPointer !== null) {
+    gunPointer = null;
+    gunBtn.classList.remove('down');
+    state.g = false;
+    dirty = true;
+  }
+};
+
+// the settings sheet scrolls; nothing else on the page should
+const sheetBody = $('sheet-body');
+document.addEventListener('touchmove', (e) => {
+  if (!sheetBody.contains(e.target as Node)) e.preventDefault();
+}, { passive: false });
 document.addEventListener('gesturestart', (e) => e.preventDefault());
 document.addEventListener('contextmenu', (e) => e.preventDefault());
 

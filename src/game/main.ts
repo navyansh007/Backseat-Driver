@@ -17,6 +17,10 @@ import { WreckFx } from './combat/wreck';
 import { Weapons } from './combat/weapons';
 import { StuntDirector } from './stunts';
 import { useWebGLOutput } from './render/output';
+import {
+  ASSIST_NAMES, CAM_VIEWS, QUALITY_LEVELS,
+  type CommandMsg, type RendererChoice, type Settings, type SettingsMsg,
+} from '../shared/protocol';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const ui = {
@@ -37,19 +41,37 @@ function toast(text: string, ms = 2400) {
   toastTimer = window.setTimeout(() => ui.toast.classList.remove('show'), ms);
 }
 
+const storageGet = (k: string) => {
+  try { return localStorage.getItem(k); } catch { return null; }
+};
+const storageSet = (k: string, v: string) => {
+  try { localStorage.setItem(k, v); } catch { /* storage unavailable */ }
+};
+/** A saved number in [min, max], else `fallback`. */
+const storedNumber = (k: string, fallback: number, min: number, max: number) => {
+  const raw = storageGet(k);
+  const v = raw === null ? NaN : Number(raw);
+  return Number.isFinite(v) && v >= min && v <= max ? v : fallback;
+};
+
 // yield so loading text can paint; setTimeout (not rAF) so loading also progresses in a background tab
 const nextFrame = () => new Promise((r) => setTimeout(r, 30));
 
 async function boot() {
   // ------------------------------------------------------------ renderer
   const canvas = $<HTMLCanvasElement>('view');
-  // WebGPU where the browser has it (it can pick the discrete GPU), WebGL 2 otherwise; ?gl=1 forces WebGL 2
+  // WebGPU where the browser has it (it can pick the discrete GPU), WebGL 2 otherwise.
+  // ?gl=1 or the phone's graphics setting forces WebGL 2.
+  const preferred: RendererChoice = storageGet('tnd-renderer') === 'webgl' ? 'webgl' : 'webgpu';
   const renderer = new THREE.WebGPURenderer({
     canvas, antialias: true, alpha: false, powerPreference: 'high-performance',
-    forceWebGL: new URLSearchParams(location.search).get('gl') === '1',
+    forceWebGL: new URLSearchParams(location.search).get('gl') === '1' || preferred === 'webgl',
   });
   await renderer.init();
-  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  const backend: RendererChoice = (renderer.backend as { isWebGPUBackend?: boolean }).isWebGPUBackend ? 'webgpu' : 'webgl';
+  let quality = storedNumber('tnd-quality', QUALITY_LEVELS.length - 1, 0, QUALITY_LEVELS.length - 1);
+  const applyQuality = () => renderer.setPixelRatio(Math.min(devicePixelRatio, QUALITY_LEVELS[quality].ratio));
+  applyQuality();
   renderer.setSize(innerWidth, innerHeight);
   renderer.toneMappingExposure = 1.0;
   renderer.shadowMap.enabled = true;
@@ -110,24 +132,20 @@ async function boot() {
     onTrafficRespawn: (body) => life.trafficRespawn(body),
   }, wreck);
   // driving assist level, remembered per browser
-  const ASSIST_LEVELS = [
-    { name: 'off', value: 0 },
-    { name: 'light', value: 0.4 },
-    { name: 'medium', value: 0.7 },
-    { name: 'strong', value: 1 },
-  ];
-  let assistIdx = 2;
-  try {
-    const saved = Number(localStorage.getItem('tnd-assist'));
-    if (Number.isInteger(saved) && saved >= 0 && saved < ASSIST_LEVELS.length && localStorage.getItem('tnd-assist') !== null) assistIdx = saved;
-  } catch { /* storage unavailable */ }
-  car.sim.assist = ASSIST_LEVELS[assistIdx].value;
-  const cycleAssist = () => {
-    assistIdx = (assistIdx + 1) % ASSIST_LEVELS.length;
-    car.sim.assist = ASSIST_LEVELS[assistIdx].value;
-    try { localStorage.setItem('tnd-assist', String(assistIdx)); } catch { /* ignore */ }
-    toast(`steering assist: ${ASSIST_LEVELS[assistIdx].name}`, 1600);
+  const ASSIST_VALUES = [0, 0.4, 0.7, 1];
+  let assistIdx = storedNumber('tnd-assist', 2, 0, ASSIST_VALUES.length - 1);
+  if (!Number.isInteger(assistIdx)) assistIdx = 2;
+  car.sim.assist = ASSIST_VALUES[assistIdx];
+  const setAssist = (i: number) => {
+    assistIdx = i;
+    car.sim.assist = ASSIST_VALUES[assistIdx];
+    storageSet('tnd-assist', String(assistIdx));
+    toast(`steering assist: ${ASSIST_NAMES[assistIdx]}`, 1600);
   };
+  const cycleAssist = () => setAssist((assistIdx + 1) % ASSIST_VALUES.length);
+  // volumes are remembered too; mute and music on/off reset with each visit, as before
+  audio.setVolume(storedNumber('tnd-volume', 1, 0, 1));
+  music.setVolume(storedNumber('tnd-music-volume', 1, 0, 1));
 
   // fences, lamp posts, flag poles and bollards snapping under a hard hit
   lot.breakables.hooks = {
@@ -185,6 +203,8 @@ async function boot() {
 
   // ------------------------------------------------------------ UI state
   let playing = false;
+  // the chosen chase view, kept while the title screen orbits the car
+  let view: Settings['cam'] = 'chase';
   let hintsOn = true;
   const start = () => {
     if (playing) return;
@@ -192,8 +212,9 @@ async function boot() {
     ui.title.classList.add('hidden');
     ui.hud.classList.remove('hidden');
     ui.brand.classList.add('hidden');
-    cam.mode = 'chase';
+    cam.mode = view;
     cam.snap(car.root);
+    pushSettings();
   };
   const showMenu = () => {
     stunts.cancel();
@@ -202,10 +223,13 @@ async function boot() {
     ui.hud.classList.add('hidden');
     ui.brand.classList.remove('hidden');
     cam.mode = 'orbit';
+    pushSettings();
   };
   const audioStart = () => {
     audio.start();
     ui.soundNote.classList.add('hidden');
+    // the browser unlocks audio a moment later; let the phone know it can play
+    setTimeout(pushSettings, 300);
   };
   addEventListener('pointerdown', audioStart);
   addEventListener('keydown', audioStart);
@@ -226,30 +250,110 @@ async function boot() {
     setLinkUi(n);
     if (n > prevPhones) toast('phone linked — the car is yours');
     else if (n < prevPhones) toast('phone disconnected');
+    if (n > prevPhones) pushSettings();
     prevPhones = n;
   };
+
+  // ------------------------------------------------------------ settings (keyboard and phone)
+  const setView = (v: Settings['cam']) => {
+    view = v;
+    if (playing) cam.mode = v;
+  };
+  const setStunts = (on: boolean) => {
+    stunts.enabled = on;
+    if (!on) stunts.cancel();
+  };
+  const setHints = (on: boolean) => {
+    hintsOn = on;
+    ui.hints.classList.toggle('hidden', !on);
+  };
+  const settingsMsg = (): SettingsMsg => ({
+    t: 'cfg', playing, backend, audio: audio.unlocked,
+    cam: view, assist: assistIdx, stunts: stunts.enabled, sound: !audio.isMuted, volume: +audio.masterVolume.toFixed(2),
+    music: music.isEnabled, musicVolume: +music.musicVolume.toFixed(2), hints: hintsOn, quality, renderer: preferred,
+  });
+  function pushSettings() {
+    link.send(settingsMsg());
+  }
+
+  const onCommand = (cmd: CommandMsg) => {
+    switch (cmd.c) {
+      case 'start': start(); break;
+      case 'menu': if (playing) showMenu(); break;
+      case 'reset': resetCar(); break;
+      case 'respawn': resetCar(true); break;
+      case 'set': applySetting(cmd); break;
+    }
+    pushSettings();
+  };
+  link.onCommand = onCommand;
+
+  // values come from the network: check each one before using it
+  const unit = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? Math.max(0, Math.min(1, v)) : null);
+  const index = (v: unknown, n: number) => (typeof v === 'number' && Number.isInteger(v) && v >= 0 && v < n ? v : null);
+  function applySetting({ k, v }: Extract<CommandMsg, { c: 'set' }>) {
+    switch (k) {
+      case 'cam': if (CAM_VIEWS.includes(v)) setView(v); break;
+      case 'assist': { const i = index(v, ASSIST_VALUES.length); if (i !== null) setAssist(i); break; }
+      case 'stunts': if (typeof v === 'boolean') setStunts(v); break;
+      case 'sound': if (typeof v === 'boolean') audio.setMuted(!v); break;
+      case 'volume': {
+        const x = unit(v);
+        if (x !== null) { audio.setVolume(x); storageSet('tnd-volume', String(x)); }
+        break;
+      }
+      case 'music': if (typeof v === 'boolean') music.setEnabled(v); break;
+      case 'musicVolume': {
+        const x = unit(v);
+        if (x !== null) { music.setVolume(x); storageSet('tnd-music-volume', String(x)); }
+        break;
+      }
+      case 'hints': if (typeof v === 'boolean') setHints(v); break;
+      case 'quality': {
+        const i = index(v, QUALITY_LEVELS.length);
+        if (i === null) break;
+        quality = i;
+        storageSet('tnd-quality', String(i));
+        applyQuality();
+        renderer.setSize(innerWidth, innerHeight);
+        toast(`resolution: ${QUALITY_LEVELS[i].name}`, 1400);
+        break;
+      }
+      case 'renderer': {
+        if ((v !== 'webgpu' && v !== 'webgl') || v === preferred) break;
+        // a different backend needs a fresh page; the room code survives the reload
+        storageSet('tnd-renderer', v);
+        toast(`switching to ${v === 'webgpu' ? 'WebGPU' : 'WebGL'}…`, 4000);
+        const url = new URL(location.href);
+        url.searchParams.delete('gl');
+        setTimeout(() => location.replace(url), 400);
+        break;
+      }
+    }
+  }
 
   addEventListener('keydown', (e) => {
     switch (e.code) {
       case 'Enter': start(); break;
       case 'Escape': playing ? showMenu() : start(); break;
-      case 'KeyC': if (playing) cam.cycle(); break;
+      case 'KeyC': if (playing) setView(CAM_VIEWS[(CAM_VIEWS.indexOf(view) + 1) % CAM_VIEWS.length]); break;
       case 'KeyR': resetCar(); break;
       case 'KeyM': toast(audio.toggleMute() ? 'sound off' : 'sound on', 1200); break;
       case 'KeyB': toast(music.toggle() ? 'music on' : 'music off', 1200); break;
       case 'KeyV': cycleAssist(); break;
       case 'KeyK':
-        stunts.enabled = !stunts.enabled;
-        if (!stunts.enabled) stunts.cancel();
+        setStunts(!stunts.enabled);
         toast(stunts.enabled ? 'stunt cam on' : 'stunt cam off', 1400);
         break;
       case 'KeyQ': playing ? showMenu() : start(); break;
-      case 'KeyH': hintsOn = !hintsOn; ui.hints.classList.toggle('hidden', !hintsOn); break;
+      case 'KeyH': setHints(!hintsOn); break;
       case 'KeyF': case 'KeyG':
       case 'KeyW': case 'KeyA': case 'KeyS': case 'KeyD':
       case 'ArrowUp': case 'ArrowDown': case 'ArrowLeft': case 'ArrowRight':
-        start(); break;
+        start(); return;
+      default: return;
     }
+    pushSettings();
   });
   addEventListener('resize', () => {
     renderer.setSize(innerWidth, innerHeight);
@@ -271,6 +375,7 @@ async function boot() {
   let flippedFor = 0;
   let musicStarted = false;
   let teleT = 0;
+  let cfgT = 0;
   let input = { steer: 0, throttle: 0, handbrake: false };
   const tmp = new THREE.Vector3();
   const right = new THREE.Vector3();
@@ -385,6 +490,12 @@ async function boot() {
     if (teleT > 0.1) {
       teleT = 0;
       link.send({ t: 'tele', kmh, gear, msl: weapons.missiles, heat: +weapons.heat.toFixed(2), hot: weapons.overheated, lock: !!weapons.lock });
+    }
+    // settings again once a second: the direct link may drop a packet, and new phones need them
+    cfgT += dt;
+    if (cfgT > 1) {
+      cfgT = 0;
+      pushSettings();
     }
 
     // during a stunt the director drives the camera; cut straight back to the chase cam after

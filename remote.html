@@ -37,6 +37,12 @@
           <div class="led" id="led" title="link"></div>
         </div>
 
+        <div class="keys">
+          <button class="key" id="k-cam" aria-label="Change camera view"><i></i><span>cam</span><small id="k-cam-v">chase</small></button>
+          <button class="key" id="k-reset" aria-label="Reset car"><i></i><span>reset</span></button>
+          <button class="key" id="k-setup" aria-label="Settings"><i></i><span>setup</span></button>
+        </div>
+
         <div class="buttons">
           <div class="btn-wrap">
             <button class="fire gun" id="gun" aria-label="Machine guns (hold)"><span>gun</span></button>
@@ -64,6 +70,18 @@
         </div>
       </section>
     </main>
+
+    <!-- settings sheet (filled by src/remote/settings.ts) -->
+    <div class="sheet" id="sheet" aria-hidden="true" role="dialog" aria-label="Game settings">
+      <div class="sheet-panel">
+        <header class="sheet-head">
+          <div class="label">setup <span>game settings</span></div>
+          <div class="sheet-wait">waiting for the game…</div>
+          <button class="action done" data-close>done</button>
+        </header>
+        <div class="sheet-body" id="sheet-body"></div>
+      </div>
+    </div>
 
     <div class="rotate">
       <div class="phone-icon"></div>

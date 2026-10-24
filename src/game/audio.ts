@@ -15,6 +15,8 @@ export class CarAudio {
   private windGain!: GainNode;
   private noise!: AudioBuffer;
   private muted = false;
+  /** master volume, 0–1 (1 = the original mix level) */
+  private volume = 1;
   rpm = 900;
   gear = 1;
 
@@ -46,7 +48,7 @@ export class CarAudio {
     const ctx = new AudioContext();
     this.ctx = ctx;
     this.master = ctx.createGain();
-    this.master.gain.value = this.muted ? 0 : 0.55;
+    this.master.gain.value = this.level();
     const comp = ctx.createDynamicsCompressor();
     this.master.connect(comp).connect(ctx.destination);
     this.musicBus = ctx.createGain();
@@ -118,9 +120,39 @@ export class CarAudio {
   }
 
   toggleMute() {
-    this.muted = !this.muted;
-    if (this.ctx) this.master.gain.setTargetAtTime(this.muted ? 0 : 0.55, this.ctx.currentTime, 0.05);
+    return this.setMuted(!this.muted);
+  }
+
+  setMuted(on: boolean) {
+    this.muted = on;
+    this.applyLevel();
     return this.muted;
+  }
+
+  get isMuted() {
+    return this.muted;
+  }
+
+  /** True once the browser has let audio play (needs a click or key press on the game page). */
+  get unlocked() {
+    return this.ctx?.state === 'running';
+  }
+
+  setVolume(v: number) {
+    this.volume = Math.max(0, Math.min(1, v));
+    this.applyLevel();
+  }
+
+  get masterVolume() {
+    return this.volume;
+  }
+
+  private level() {
+    return this.muted ? 0 : 0.55 * this.volume;
+  }
+
+  private applyLevel() {
+    if (this.ctx) this.master.gain.setTargetAtTime(this.level(), this.ctx.currentTime, 0.05);
   }
 
   /** Silence every sound effect (stunt cinematics play the score alone), or bring them back. */

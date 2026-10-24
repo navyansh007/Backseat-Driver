@@ -2,7 +2,6 @@ import * as THREE from 'three';
 import { RAPIER, G, groups, type Physics } from './physics';
 
 export type CamMode = 'chase' | 'far' | 'bumper' | 'orbit';
-const MODES: CamMode[] = ['chase', 'far', 'bumper'];
 
 const RAY_GROUPS = groups(0xffff, G.WORLD | G.CAR);
 
@@ -19,11 +18,6 @@ export class ChaseCamera {
 
   constructor(private phys: Physics) {
     this.camera = new THREE.PerspectiveCamera(this.baseFov, innerWidth / innerHeight, 0.1, 3000);
-  }
-
-  cycle() {
-    if (this.mode === 'orbit') this.mode = 'chase';
-    else this.mode = MODES[(MODES.indexOf(this.mode) + 1) % MODES.length];
   }
 
   bump(power: number) {
