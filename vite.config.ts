@@ -8,6 +8,8 @@ const allowedHosts = publicHost ? [publicHost] : undefined;
 
 export default defineConfig({
   plugins: [relayPlugin()],
+  // one three.js entry: the WebGPU build (with its WebGL 2 fallback) instead of the classic WebGL renderer
+  resolve: { alias: [{ find: /^three$/, replacement: 'three/webgpu' }] },
   server: { host: true, port: 5173, strictPort: true, allowedHosts },
   preview: { host: true, port: 4173, strictPort: true, allowedHosts },
   build: {

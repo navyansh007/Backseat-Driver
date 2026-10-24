@@ -1,5 +1,5 @@
 import '../styles/game.css';
-import * as THREE from 'three';
+import * as THREE from 'three/webgpu';
 import { Physics } from './physics';
 import { Environment, buildSurroundings } from './world/environment';
 import { buildLot } from './world/lot';
@@ -16,6 +16,7 @@ import { Destruction } from './combat/destruction';
 import { WreckFx } from './combat/wreck';
 import { Weapons } from './combat/weapons';
 import { StuntDirector } from './stunts';
+import { useWebGLOutput } from './render/output';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const ui = {
@@ -42,13 +43,22 @@ const nextFrame = () => new Promise((r) => setTimeout(r, 30));
 async function boot() {
   // ------------------------------------------------------------ renderer
   const canvas = $<HTMLCanvasElement>('view');
-  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
+  // WebGPU where the browser has it (it can pick the discrete GPU), WebGL 2 otherwise; ?gl=1 forces WebGL 2
+  const renderer = new THREE.WebGPURenderer({
+    canvas, antialias: true, alpha: false, powerPreference: 'high-performance',
+    forceWebGL: new URLSearchParams(location.search).get('gl') === '1',
+  });
+  await renderer.init();
   renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
   renderer.setSize(innerWidth, innerHeight);
-  renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 1.0;
   renderer.shadowMap.enabled = true;
-  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  // three.js r186 had already replaced PCFSoftShadowMap with PCFShadowMap under WebGL too
+  renderer.shadowMap.type = THREE.PCFShadowMap;
+  renderer.onDeviceLost = (info) => {
+    console.error('[gpu] device lost', info);
+    toast('the graphics device was reset — reload the page to keep driving', 600000);
+  };
 
   const scene = new THREE.Scene();
   const link = new RemoteLink();
@@ -65,6 +75,7 @@ async function boot() {
   await nextFrame();
   const phys = await Physics.create();
   const env = new Environment(scene, renderer);
+  useWebGLOutput(renderer, scene, scene.fog as THREE.Fog);
 
   ui.loadingText.textContent = 'building the car park…';
   await nextFrame();
@@ -165,7 +176,12 @@ async function boot() {
   car.capture();
   car.capture();
   phys.sync(true);
-  renderer.compile(scene, cam.camera);
+  // compile every pipeline up front, including effects that start hidden (fireballs, rings),
+  // so the first explosion doesn't stall on shader compilation
+  const hidden: THREE.Object3D[] = [];
+  scene.traverse((o) => { if (!o.visible) { hidden.push(o); o.visible = true; } });
+  await renderer.compileAsync(scene, cam.camera);
+  for (const o of hidden) o.visible = false;
 
   // ------------------------------------------------------------ UI state
   let playing = false;

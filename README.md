@@ -62,4 +62,4 @@ The relay routing (`server/relayCore.ts`) is shared by the Vite dev server (`ser
 
 ## Tech
 
-Vite + TypeScript, Three.js for rendering, Rapier (WASM) for physics, Web Audio for sound, WebRTC data channels for the phone link, and a Cloudflare Worker + Durable Object (or the Vite server, in development) for pairing.
+Vite + TypeScript, Three.js (WebGPU renderer, with an automatic WebGL 2 fallback; add `?gl=1` to force WebGL 2) for rendering, Rapier (WASM) for physics, Web Audio for sound, WebRTC data channels for the phone link, and a Cloudflare Worker + Durable Object (or the Vite server, in development) for pairing.

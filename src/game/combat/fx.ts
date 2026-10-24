@@ -1,4 +1,10 @@
-import * as THREE from 'three';
+import * as THREE from 'three/webgpu';
+import {
+  Discard, Fn, Loop, attribute, cameraProjectionMatrix, clamp, dot, float, floor, fract, max, mix, modelViewMatrix, normalGeometry,
+  normalize, positionGeometry, pow, smoothstep, texture, transformNormalToView, uniform, uv, varying, varyingProperty, vec3, vec4,
+} from 'three/tsl';
+import type { Node } from 'three/webgpu';
+import { billboardGeometry, billboardVertex, dynamicInstanced } from '../render/billboard';
 import { smokeTexture } from '../world/textures';
 
 let smokeTex: THREE.Texture | null = null;
@@ -7,7 +13,10 @@ const SMOKE_TEX = () => (smokeTex ??= smokeTexture());
 const tmpM = new THREE.Matrix4();
 const tmpV = new THREE.Vector3();
 const tmpQ = new THREE.Quaternion();
+const tmpC = new THREE.Color();
+const tmpS = new THREE.Vector3();
 const UP = new THREE.Vector3(0, 1, 0);
+const FWD = new THREE.Vector3(0, 0, 1);
 
 export interface EmitOpts {
   life: number;
@@ -22,7 +31,9 @@ export interface EmitOpts {
 
 /** Camera-facing billboard particles with per-instance colour/alpha. */
 export class Particles {
-  private mesh: THREE.InstancedMesh;
+  private mesh: THREE.Mesh;
+  private center: THREE.InstancedBufferAttribute; // xyz + size
+  private angle: THREE.InstancedBufferAttribute;
   private color: THREE.InstancedBufferAttribute;
   private alpha: THREE.InstancedBufferAttribute;
   private p: { pos: THREE.Vector3; vel: THREE.Vector3; t: number; o: Required<EmitOpts>; c1: THREE.Color; c2: THREE.Color; spin: number }[] = [];
@@ -30,39 +41,33 @@ export class Particles {
   private live = 0;
 
   constructor(scene: THREE.Scene, private max: number, additive: boolean) {
-    const geo = new THREE.PlaneGeometry(1, 1);
-    this.color = new THREE.InstancedBufferAttribute(new Float32Array(max * 3), 3);
-    this.alpha = new THREE.InstancedBufferAttribute(new Float32Array(max), 1);
+    const geo = billboardGeometry(max);
+    this.center = dynamicInstanced(max, 4);
+    this.angle = dynamicInstanced(max, 1);
+    this.color = dynamicInstanced(max, 3);
+    this.alpha = dynamicInstanced(max, 1);
+    geo.setAttribute('aCenter', this.center);
+    geo.setAttribute('aAngle', this.angle);
     geo.setAttribute('aColor', this.color);
     geo.setAttribute('aAlpha', this.alpha);
-    const mat = new THREE.ShaderMaterial({
-      transparent: true,
-      depthWrite: false,
-      blending: additive ? THREE.AdditiveBlending : THREE.NormalBlending,
-      uniforms: { map: { value: SMOKE_TEX() } },
-      vertexShader: `
-        attribute vec3 aColor; attribute float aAlpha;
-        varying vec3 vC; varying float vA; varying vec2 vUv;
-        void main(){
-          vUv = uv; vC = aColor; vA = aAlpha;
-          vec3 c = (instanceMatrix * vec4(0.0,0.0,0.0,1.0)).xyz;
-          float s = length(instanceMatrix[0].xyz);
-          float r = atan(instanceMatrix[0].y, instanceMatrix[0].x);
-          vec2 q = vec2(cos(r)*position.x - sin(r)*position.y, sin(r)*position.x + cos(r)*position.y);
-          vec4 mv = modelViewMatrix * vec4(c,1.0);
-          mv.xy += q * s;
-          gl_Position = projectionMatrix * mv;
-        }`,
-      fragmentShader: `
-        uniform sampler2D map; varying vec3 vC; varying float vA; varying vec2 vUv;
-        void main(){ float a = texture2D(map, vUv).a * vA; if (a < 0.003) discard; gl_FragColor = vec4(vC, a); }`,
-    });
-    this.mesh = new THREE.InstancedMesh(geo, mat, max);
+    const mat = new THREE.NodeMaterial();
+    mat.transparent = true;
+    mat.depthWrite = false;
+    mat.fog = false;
+    mat.blending = additive ? THREE.AdditiveBlending : THREE.NormalBlending;
+    mat.vertexNode = billboardVertex(attribute('aCenter', 'vec4'), attribute('aAngle', 'float'));
+    const vC = varying(attribute('aColor', 'vec3'));
+    const vA = varying(attribute('aAlpha', 'float'));
+    mat.fragmentNode = Fn(() => {
+      const a = texture(SMOKE_TEX(), uv()).a.mul(vA);
+      Discard(a.lessThan(0.003));
+      return vec4(vC, a);
+    })();
+    this.mesh = new THREE.Mesh(geo, mat);
     this.mesh.frustumCulled = false;
     this.mesh.renderOrder = additive ? 4 : 3;
     for (let i = 0; i < max; i++) {
       this.p.push({ pos: new THREE.Vector3(), vel: new THREE.Vector3(), t: 0, o: null!, c1: new THREE.Color(), c2: new THREE.Color(), spin: 0 });
-      this.mesh.setMatrixAt(i, tmpM.makeScale(0, 0, 0));
     }
     scene.add(this.mesh);
   }
@@ -83,13 +88,17 @@ export class Particles {
   update(dt: number) {
     if (!this.live) return;
     let alive = 0;
-    const c = new THREE.Color();
+    const c = tmpC;
+    const center = this.center.array as Float32Array;
+    const angle = this.angle.array as Float32Array;
+    const color = this.color.array as Float32Array;
+    const alpha = this.alpha.array as Float32Array;
     for (let i = 0; i < this.max; i++) {
       const s = this.p[i];
       if (!s.o || s.t >= s.o.life) {
-        if (this.alpha.getX(i) !== 0) {
-          this.alpha.setX(i, 0);
-          this.mesh.setMatrixAt(i, tmpM.makeScale(0, 0, 0));
+        if (alpha[i] !== 0) {
+          alpha[i] = 0;
+          center[i * 4 + 3] = 0;
         }
         continue;
       }
@@ -99,17 +108,21 @@ export class Particles {
       s.vel.y += s.o.gravity * dt;
       s.vel.multiplyScalar(Math.exp(-s.o.drag * dt));
       s.pos.addScaledVector(s.vel, dt);
-      const size = s.o.size * (1 + (s.o.grow - 1) * Math.sqrt(k));
-      tmpQ.setFromAxisAngle(new THREE.Vector3(0, 0, 1), s.spin + k * 0.8);
-      tmpM.compose(s.pos, tmpQ, tmpV.set(size, size, size));
-      this.mesh.setMatrixAt(i, tmpM);
+      center[i * 4] = s.pos.x;
+      center[i * 4 + 1] = s.pos.y;
+      center[i * 4 + 2] = s.pos.z;
+      center[i * 4 + 3] = s.o.size * (1 + (s.o.grow - 1) * Math.sqrt(k));
+      angle[i] = s.spin + k * 0.8;
       c.copy(s.c1).lerp(s.c2, k);
-      this.color.setXYZ(i, c.r, c.g, c.b);
+      color[i * 3] = c.r;
+      color[i * 3 + 1] = c.g;
+      color[i * 3 + 2] = c.b;
       const fadeIn = Math.min(1, k * 8);
-      this.alpha.setX(i, s.o.alpha * fadeIn * (1 - k) * (1 - k * 0.3));
+      alpha[i] = s.o.alpha * fadeIn * (1 - k) * (1 - k * 0.3);
     }
     this.live = alive;
-    this.mesh.instanceMatrix.needsUpdate = true;
+    this.center.needsUpdate = true;
+    this.angle.needsUpdate = true;
     this.color.needsUpdate = true;
     this.alpha.needsUpdate = true;
   }
@@ -182,9 +195,9 @@ export class Streaks {
       const len = s.a.distanceTo(s.b);
       if (len < 1e-4) continue;
       tmpV.subVectors(s.a, s.b).normalize();
-      tmpQ.setFromUnitVectors(new THREE.Vector3(0, 0, 1), tmpV);
+      tmpQ.setFromUnitVectors(FWD, tmpV);
       const fade = 1 - s.t / s.life;
-      tmpM.compose(s.b, tmpQ, new THREE.Vector3(s.width * fade, s.width * fade, len));
+      tmpM.compose(s.b, tmpQ, tmpS.set(s.width * fade, s.width * fade, len));
       this.mesh.setMatrixAt(i, tmpM);
     }
     this.mesh.instanceMatrix.needsUpdate = true;
@@ -345,69 +358,98 @@ export class Rings {
   }
 }
 
-const NOISE_GLSL = `
-  float hash3(vec3 p) { p = fract(p * 0.3183099 + 0.1); p *= 17.0; return fract(p.x * p.y * p.z * (p.x + p.y + p.z)); }
-  float vnoise(vec3 x) {
-    vec3 i = floor(x); vec3 f = fract(x); f = f * f * (3.0 - 2.0 * f);
-    return mix(mix(mix(hash3(i + vec3(0,0,0)), hash3(i + vec3(1,0,0)), f.x),
-                   mix(hash3(i + vec3(0,1,0)), hash3(i + vec3(1,1,0)), f.x), f.y),
-               mix(mix(hash3(i + vec3(0,0,1)), hash3(i + vec3(1,0,1)), f.x),
-                   mix(hash3(i + vec3(0,1,1)), hash3(i + vec3(1,1,1)), f.x), f.y), f.z);
-  }
-  float fbm(vec3 p) { float v = 0.0; float a = 0.5; for (int i = 0; i < 5; i++) { v += a * vnoise(p); p *= 2.03; a *= 0.5; } return v; }
-`;
+// value noise + fbm for the fireballs (same maths as the original GLSL)
+const hash3 = Fn(([p0]: [Node<'vec3'>]) => {
+  const p = fract(p0.mul(0.3183099).add(0.1)).mul(17.0).toVar();
+  return fract(p.x.mul(p.y).mul(p.z).mul(p.x.add(p.y).add(p.z)));
+}).setLayout({ name: 'hash3', type: 'float', inputs: [{ name: 'p', type: 'vec3' }] });
+
+const vnoise = Fn(([x]: [Node<'vec3'>]) => {
+  const i = floor(x).toVar();
+  const f0 = fract(x);
+  const f = f0.mul(f0).mul(float(3.0).sub(f0.mul(2.0))).toVar();
+  const h = (dx: number, dy: number, dz: number) => hash3(i.add(vec3(dx, dy, dz)));
+  return mix(
+    mix(mix(h(0, 0, 0), h(1, 0, 0), f.x), mix(h(0, 1, 0), h(1, 1, 0), f.x), f.y),
+    mix(mix(h(0, 0, 1), h(1, 0, 1), f.x), mix(h(0, 1, 1), h(1, 1, 1), f.x), f.y),
+    f.z,
+  );
+}).setLayout({ name: 'vnoise', type: 'float', inputs: [{ name: 'x', type: 'vec3' }] });
+
+const fbm = Fn(([p0]: [Node<'vec3'>]) => {
+  const p = vec3(p0).toVar();
+  const v = float(0.0).toVar();
+  const a = float(0.5).toVar();
+  Loop(5, () => {
+    v.addAssign(a.mul(vnoise(p)));
+    p.mulAssign(2.03);
+    a.mulAssign(0.5);
+  });
+  return v;
+}).setLayout({ name: 'fbm', type: 'float', inputs: [{ name: 'p', type: 'vec3' }] });
+
+interface Fireball { mesh: THREE.Mesh; t: number; life: number; size: number; base: THREE.Vector3; time: number; prog: number; seed: number }
+
+/** One material for all fireballs; each mesh feeds its own time/progress/seed. */
+function fireballMaterial() {
+  const ball = (object: THREE.Object3D) => object.userData.fireball as Fireball;
+  const uTime = uniform(0).onObjectUpdate(({ object }) => ball(object!).time);
+  const uProg = uniform(0).onObjectUpdate(({ object }) => ball(object!).prog);
+  const uSeed = uniform(0).onObjectUpdate(({ object }) => ball(object!).seed);
+  const vN = varyingProperty('float', 'vN');
+  const vNormal = varyingProperty('vec3', 'vNormal');
+  const vView = varyingProperty('vec3', 'vView');
+
+  const mat = new THREE.NodeMaterial();
+  mat.transparent = true;
+  mat.depthWrite = false;
+  mat.fog = false;
+  mat.vertexNode = Fn(() => {
+    const p = positionGeometry;
+    const n = fbm(p.mul(1.6).add(vec3(0.0, uTime.mul(-1.6), uSeed))).toVar();
+    vN.assign(n);
+    const amp = uProg.mul(0.35).add(0.55);
+    const displaced = p.mul(n.mul(amp).add(0.72)).toVar();
+    displaced.y.addAssign(pow(max(p.y, 0.0), 2.0).mul(uProg).mul(0.6)); // mushrooms upward
+    const mv = modelViewMatrix.mul(vec4(displaced, 1.0)).toVar();
+    vNormal.assign(normalize(transformNormalToView(normalGeometry)));
+    vView.assign(normalize(mv.xyz.negate()));
+    return cameraProjectionMatrix.mul(mv);
+  })();
+  mat.fragmentNode = Fn(() => {
+    const rim = clamp(dot(vNormal, vView), 0.0, 1.0);
+    // heat: high in the core early, cooling with age and toward the silhouette
+    const heat = clamp(vN.mul(1.6).mul(float(1.0).sub(uProg.mul(1.15))).add(rim.mul(0.45)).sub(0.15), 0.0, 1.0).toVar();
+    const soot = vec3(0.07, 0.06, 0.055);
+    const col = mix(soot, vec3(0.9, 0.18, 0.02), smoothstep(0.05, 0.35, heat)).toVar();
+    col.assign(mix(col, vec3(1.0, 0.55, 0.1), smoothstep(0.35, 0.65, heat)));
+    col.assign(mix(col, vec3(1.0, 0.95, 0.7), smoothstep(0.65, 0.95, heat)));
+    const glow = smoothstep(0.35, 1.0, heat).mul(2.5).add(1.0);
+    const alpha = float(1.0).sub(smoothstep(0.55, 1.0, uProg)).mul(rim.mul(0.4).add(0.6));
+    return vec4(col.mul(glow), alpha);
+  })();
+  return mat;
+}
 
 /**
  * Volumetric-looking fireballs: a dense sphere displaced by animated fractal noise,
  * shaded from a white-hot core through orange flame to sooty black as it rises and dies.
  */
 export class Fireballs {
-  private balls: { mesh: THREE.Mesh; mat: THREE.ShaderMaterial; t: number; life: number; size: number; base: THREE.Vector3 }[] = [];
+  private balls: Fireball[] = [];
   private next = 0;
 
   constructor(scene: THREE.Scene, n = 10) {
     const geo = new THREE.IcosahedronGeometry(1, 20);
+    const mat = fireballMaterial();
     for (let i = 0; i < n; i++) {
-      const mat = new THREE.ShaderMaterial({
-        transparent: true,
-        depthWrite: false,
-        uniforms: { uTime: { value: 0 }, uProg: { value: 0 }, uSeed: { value: Math.random() * 100 } },
-        vertexShader: `
-          uniform float uTime; uniform float uProg; uniform float uSeed;
-          varying float vN; varying vec3 vNormal; varying vec3 vView;
-          ${NOISE_GLSL}
-          void main() {
-            vec3 p = position;
-            float n = fbm(p * 1.6 + vec3(0.0, -uTime * 1.6, uSeed));
-            vN = n;
-            float amp = 0.55 + uProg * 0.35;
-            vec3 displaced = p * (0.72 + n * amp);
-            displaced.y += pow(max(p.y, 0.0), 2.0) * uProg * 0.6; // mushrooms upward
-            vec4 mv = modelViewMatrix * vec4(displaced, 1.0);
-            vNormal = normalize(normalMatrix * normal);
-            vView = normalize(-mv.xyz);
-            gl_Position = projectionMatrix * mv;
-          }`,
-        fragmentShader: `
-          uniform float uProg; varying float vN; varying vec3 vNormal; varying vec3 vView;
-          void main() {
-            float rim = clamp(dot(vNormal, vView), 0.0, 1.0);
-            // heat: high in the core early, cooling with age and toward the silhouette
-            float heat = clamp(vN * 1.6 * (1.0 - uProg * 1.15) + rim * 0.45 - 0.15, 0.0, 1.0);
-            vec3 soot = vec3(0.07, 0.06, 0.055);
-            vec3 col = mix(soot, vec3(0.9, 0.18, 0.02), smoothstep(0.05, 0.35, heat));
-            col = mix(col, vec3(1.0, 0.55, 0.1), smoothstep(0.35, 0.65, heat));
-            col = mix(col, vec3(1.0, 0.95, 0.7), smoothstep(0.65, 0.95, heat));
-            float glow = 1.0 + smoothstep(0.35, 1.0, heat) * 2.5; // HDR so bloom picks it up
-            float alpha = (1.0 - smoothstep(0.55, 1.0, uProg)) * (0.6 + rim * 0.4);
-            gl_FragColor = vec4(col * glow, alpha);
-          }`,
-      });
       const mesh = new THREE.Mesh(geo, mat);
       mesh.visible = false;
       mesh.renderOrder = 5;
       scene.add(mesh);
-      this.balls.push({ mesh, mat, t: 0, life: 1, size: 1, base: new THREE.Vector3() });
+      const ball: Fireball = { mesh, t: 0, life: 1, size: 1, base: new THREE.Vector3(), time: 0, prog: 0, seed: Math.random() * 100 };
+      mesh.userData.fireball = ball;
+      this.balls.push(ball);
     }
   }
 
@@ -418,7 +460,7 @@ export class Fireballs {
     b.life = life;
     b.size = size;
     b.base.copy(p);
-    b.mat.uniforms.uSeed.value = Math.random() * 100;
+    b.seed = Math.random() * 100;
     b.mesh.rotation.set(Math.random() * 6, Math.random() * 6, Math.random() * 6);
     b.mesh.visible = true;
   }
@@ -435,8 +477,8 @@ export class Fireballs {
       const grow = 1 - Math.pow(1 - Math.min(1, k * 2.2), 3); // fast blast, then billow
       b.mesh.scale.setScalar(b.size * (0.25 + grow * 0.9 + k * 0.35));
       b.mesh.position.copy(b.base).setY(b.base.y + k * k * b.size * 1.6);
-      b.mat.uniforms.uTime.value += dt;
-      b.mat.uniforms.uProg.value = k;
+      b.time += dt;
+      b.prog = k;
     }
   }
 }
