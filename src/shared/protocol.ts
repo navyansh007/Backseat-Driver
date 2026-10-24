@@ -28,6 +28,62 @@ export interface TelemetryMsg {
   lock?: boolean;
 }
 
+/** Chase-camera views the phone can pick. */
+export const CAM_VIEWS = ['chase', 'far', 'bumper'] as const;
+export type CamView = (typeof CAM_VIEWS)[number];
+/** Steering-assist levels, weakest first. */
+export const ASSIST_NAMES = ['off', 'light', 'medium', 'strong'] as const;
+/** Render resolution presets: the most device pixels drawn per CSS pixel. */
+export const QUALITY_LEVELS = [
+  { name: 'low', ratio: 0.75 },
+  { name: 'medium', ratio: 1 },
+  { name: 'high', ratio: 1.5 },
+  { name: 'max', ratio: 2 },
+] as const;
+export type RendererChoice = 'webgpu' | 'webgl';
+
+/** Game settings the phone can change. */
+export interface Settings {
+  cam: CamView;
+  /** index into ASSIST_NAMES */
+  assist: number;
+  /** slow-motion stunt cinematics */
+  stunts: boolean;
+  sound: boolean;
+  /** master volume 0–1 */
+  volume: number;
+  music: boolean;
+  /** soundtrack volume 0–1 */
+  musicVolume: number;
+  /** keyboard hints on the game screen */
+  hints: boolean;
+  /** index into QUALITY_LEVELS */
+  quality: number;
+  /** graphics backend to use; changing it reloads the game */
+  renderer: RendererChoice;
+}
+export type SettingKey = keyof Settings;
+
+/** The game's current settings and state, sent to phones on every change and once a second. */
+export interface SettingsMsg extends Settings {
+  t: 'cfg';
+  /** driving (false: on the title / pairing screen) */
+  playing: boolean;
+  /** backend actually running */
+  backend: RendererChoice;
+  /** the game page has been clicked, so the browser lets it play sound */
+  audio: boolean;
+}
+
+/**
+ * A phone command. Sent over both the direct link and the relay so it isn't lost;
+ * the game ignores an `id` it has already seen.
+ */
+export type CommandMsg = { t: 'cmd'; id: string } & (
+  | { c: 'start' | 'menu' | 'reset' | 'respawn' }
+  | { [K in SettingKey]: { c: 'set'; k: K; v: Settings[K] } }[SettingKey]
+);
+
 /** Collision feedback, used for phone haptics. */
 export interface HitMsg {
   t: 'hit';
@@ -56,8 +112,8 @@ export interface SignalMsg {
   to?: string;
 }
 
-export type RemoteToHost = InputMsg | SignalMsg;
-export type HostToRemote = (TelemetryMsg | HitMsg | SignalMsg) & { to?: string };
+export type RemoteToHost = InputMsg | CommandMsg | SignalMsg;
+export type HostToRemote = (TelemetryMsg | SettingsMsg | HitMsg | SignalMsg) & { to?: string };
 export type RelayMsg = PeerMsg;
 
 export const RELAY_PATH = '/relay';

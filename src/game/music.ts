@@ -40,6 +40,8 @@ export class MusicDirector {
   private requested = false;
   private started = false;
   private enabled = true;
+  /** soundtrack volume, 0–1 (1 = the original level) */
+  private volume = 1;
   /** Output of the stunt score currently playing. */
   private scoreNode: GainNode | null = null;
   private stunt: { headEnd: number; holdSrc: AudioBufferSourceNode; end: number } | null = null;
@@ -49,7 +51,7 @@ export class MusicDirector {
     if (this.ctx) return;
     this.ctx = ctx;
     this.out = ctx.createGain();
-    this.out.gain.value = this.enabled ? MUSIC_VOLUME : 0;
+    this.out.gain.value = this.level();
     this.out.connect(bus);
     this.drive = ctx.createGain();
     this.drive.connect(this.out);
@@ -179,9 +181,34 @@ export class MusicDirector {
   }
 
   toggle() {
-    this.enabled = !this.enabled;
-    if (this.ctx && this.out) this.out.gain.setTargetAtTime(this.enabled ? MUSIC_VOLUME : 0, this.ctx.currentTime, 0.2);
+    return this.setEnabled(!this.enabled);
+  }
+
+  setEnabled(on: boolean) {
+    this.enabled = on;
+    this.applyLevel();
     return this.enabled;
+  }
+
+  get isEnabled() {
+    return this.enabled;
+  }
+
+  setVolume(v: number) {
+    this.volume = Math.max(0, Math.min(1, v));
+    this.applyLevel();
+  }
+
+  get musicVolume() {
+    return this.volume;
+  }
+
+  private level() {
+    return this.enabled ? MUSIC_VOLUME * this.volume : 0;
+  }
+
+  private applyLevel() {
+    if (this.ctx && this.out) this.out.gain.setTargetAtTime(this.level(), this.ctx.currentTime, 0.2);
   }
 }
 

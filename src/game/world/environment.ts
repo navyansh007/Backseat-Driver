@@ -1,5 +1,5 @@
-import * as THREE from 'three';
-import { Sky } from 'three/examples/jsm/objects/Sky.js';
+import * as THREE from 'three/webgpu';
+import { SkyMesh } from 'three/examples/jsm/objects/SkyMesh.js';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import type { Physics } from '../physics';
 import { grassTexture, rng, windowsTexture } from './textures';
@@ -12,7 +12,7 @@ export class Environment {
   readonly sunDir = new THREE.Vector3();
   private shadowSize = 46;
 
-  constructor(scene: THREE.Scene, renderer: THREE.WebGLRenderer) {
+  constructor(scene: THREE.Scene, renderer: THREE.WebGPURenderer) {
     // late-afternoon sun, soft and warm
     const elevation = 34;
     const azimuth = 215;
@@ -20,23 +20,24 @@ export class Environment {
     const theta = THREE.MathUtils.degToRad(azimuth);
     this.sunDir.setFromSphericalCoords(1, phi, theta);
 
-    const sky = new Sky();
-    sky.scale.setScalar(4500);
-    const u = sky.material.uniforms;
-    u.turbidity.value = 4.5;
-    u.rayleigh.value = 1.25;
-    u.mieCoefficient.value = 0.004;
-    u.mieDirectionalG.value = 0.82;
-    u.sunPosition.value.copy(this.sunDir);
-    scene.add(sky);
+    const makeSky = (scale: number) => {
+      const sky = new SkyMesh();
+      sky.scale.setScalar(scale);
+      sky.turbidity.value = 4.5;
+      sky.rayleigh.value = 1.25;
+      sky.mieCoefficient.value = 0.004;
+      sky.mieDirectionalG.value = 0.82;
+      sky.sunPosition.value.copy(this.sunDir);
+      // clouds hold still, as they did with the WebGL sky (its time uniform stayed at 0)
+      sky.cloudSpeed.value = 0;
+      return sky;
+    };
+    scene.add(makeSky(4500));
 
     // Image-based lighting from the same sky so paint and glass reflect the scene's sky.
     const pmrem = new THREE.PMREMGenerator(renderer);
     const envScene = new THREE.Scene();
-    const envSky = new Sky();
-    envSky.scale.setScalar(1000);
-    for (const k of Object.keys(u)) envSky.material.uniforms[k].value = u[k].value;
-    envScene.add(envSky);
+    envScene.add(makeSky(1000));
     const ground = new THREE.Mesh(new THREE.CircleGeometry(900, 24), new THREE.MeshBasicMaterial({ color: 0x6f7568 }));
     ground.rotation.x = -Math.PI / 2;
     ground.position.y = -2;

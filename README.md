@@ -6,7 +6,7 @@ Inspired by the remote-controlled car chase in *Tomorrow Never Dies* (1997). All
 
 ## Features
 
-- **Phone remote.** A full-screen, retro, landscape remote with one round touchpad for driving and two fire buttons. Scan the QR code on the game screen to pair. The phone talks to the game directly over WebRTC, so input doesn't go through a server.
+- **Phone remote.** A full-screen, retro, landscape remote with one round touchpad for driving, two fire buttons, quick **CAM** / **RESET** keys and a **SETUP** sheet that controls every game setting. Scan the QR code on the game screen to pair. The phone talks to the game directly over WebRTC, so input doesn't go through a server.
 - **Driving.** Raycast-vehicle physics (Rapier) with rear-wheel drive, suspension, speed-sensitive steering, skid marks, tyre smoke and a synthesized engine.
 - **Steering assist.** Counter-steer, spin control, traction control and obstacle avoidance. Press `V` to choose off, light, medium or strong.
 - **Weapons.** Twin bumper machine guns with heat build-up and a roof launcher with four homing missiles.
@@ -34,9 +34,13 @@ npm run preview:public # production build behind the ngrok tunnel
 | Machine guns | hold **GUN** | hold `F` |
 | Missile | tap **MSL** | `G` |
 | Handbrake | — | `Space` |
-| Camera / reset / assist | — | `C` / `R` / `V` |
-| Pairing code / mute / hide hints | — | `Q` / `M` / `H` |
-| Music on/off | — | `B` |
+| Camera / reset | **CAM** / **RESET** | `C` / `R` |
+| Steering assist / stunt cam | **SETUP** | `V` / `K` |
+| Pairing screen / mute / hide hints | **SETUP** | `Q` / `M` / `H` |
+| Music on/off | **SETUP** | `B` |
+| Back to start, volumes, resolution, WebGPU/WebGL | **SETUP** | — |
+
+Volumes, resolution, steering assist and the graphics backend are remembered by the game's browser. Switching between WebGPU and WebGL reloads the game; the phone reconnects on its own. Browsers only play sound after the game page has been clicked once, so the phone can't unlock sound by itself.
 
 ## Deploy (free)
 
@@ -53,7 +57,7 @@ The Worker (`worker/index.ts`) serves the built files from `dist/` and runs the 
 
 1. The game opens a WebSocket to `/relay` under a random room code and shows it as a QR code.
 2. The phone joins the same room and sends a WebRTC offer. The relay passes the handshake (offer, answer, ICE candidates) between them. Public STUN servers (Cloudflare, Google) help each side find its address.
-3. Once the data channel opens, input and telemetry go **directly between phone and game**. The channel is unordered with no retransmits, because a late steering packet is useless; the phone repeats each change for 200 ms to cover dropped packets.
+3. Once the data channel opens, input and telemetry go **directly between phone and game**. The channel is unordered with no retransmits, because a late steering packet is useless; the phone repeats each change for 200 ms to cover dropped packets. Setting changes and other commands go over both the data channel and the relay, and the game acts on each once; the game sends its full settings back on every change and once a second.
 4. If no direct path can be found (guest Wi-Fi with client isolation, strict carrier NAT, or a computer without mDNS), everything keeps working over the relay and the phone retries a direct link in the background. The remote's screen shows `direct` or `relay`. Add `?p2p=0` to the remote URL to force relay mode.
 
 The relay routing (`server/relayCore.ts`) is shared by the Vite dev server (`server/relay.ts`) and the Durable Object, so local development behaves like production.
@@ -62,4 +66,4 @@ The relay routing (`server/relayCore.ts`) is shared by the Vite dev server (`ser
 
 ## Tech
 
-Vite + TypeScript, Three.js for rendering, Rapier (WASM) for physics, Web Audio for sound, WebRTC data channels for the phone link, and a Cloudflare Worker + Durable Object (or the Vite server, in development) for pairing.
+Vite + TypeScript, Three.js (WebGPU renderer, with an automatic WebGL 2 fallback; add `?gl=1` to force WebGL 2) for rendering, Rapier (WASM) for physics, Web Audio for sound, WebRTC data channels for the phone link, and a Cloudflare Worker + Durable Object (or the Vite server, in development) for pairing.
