@@ -33,6 +33,20 @@ export const TUNING = {
   steerRate: 3.2,
 };
 
+/** Handling numbers; each car can override any of them. */
+export type Tuning = { -readonly [K in keyof typeof TUNING]: number };
+
+/** Collision boxes in body space: half extents and centre. */
+export interface ChassisBoxes {
+  body: { half: V; at: V };
+  cabin: { half: V; at: V };
+}
+
+const DEFAULT_CHASSIS: ChassisBoxes = {
+  body: { half: { x: 0.9, y: 0.27, z: 2.52 }, at: { x: 0, y: -0.06, z: 0 } },
+  cabin: { half: { x: 0.74, y: 0.24, z: 1.3 }, at: { x: 0, y: 0.5, z: -0.3 } },
+};
+
 const WORLD_BITS = 0x0001 | 0x0008; // wheels ride on world + cars, never on small props
 const RAY_GROUPS = (0xffff << 16) | WORLD_BITS;
 
@@ -53,12 +67,16 @@ export class VehicleSim {
   readonly body: RAPIER.RigidBody;
   readonly controller: RAPIER.DynamicRayCastVehicleController;
   readonly chassisColliders: RAPIER.Collider[] = [];
-  readonly layout: WheelLayout;
+  layout: WheelLayout;
+  /** this car's handling (TUNING plus its own overrides) */
+  tune: Tuning = { ...TUNING };
   steer = 0;
   /** Driving assist strength, 0 (off) … 1 (strong). */
   assist = 0.7;
   /** How much the assist changed the steering this step (for UI/debug). */
   assistSteer = 0;
+  /** Tyre grip multiplier (1 = normal): oil, punctures. */
+  grip = 1;
   braking = false;
   reversing = false;
   engineLoad = 0;
@@ -67,7 +85,7 @@ export class VehicleSim {
   constructor(world: RAPIER.World, layout: WheelLayout, spawn: { x: number; y: number; z: number; yaw: number }, playerGroups: number) {
     this.world = world;
     this.layout = layout;
-    const T = TUNING;
+    const T = this.tune;
     const q = yawQuat(spawn.yaw);
     this.body = world.createRigidBody(
       RAPIER.RigidBodyDesc.dynamic()
@@ -78,16 +96,17 @@ export class VehicleSim {
         .setCcdEnabled(true)
         .setCanSleep(false),
     );
-    const main = RAPIER.ColliderDesc.cuboid(0.9, 0.27, 2.52)
-      .setTranslation(0, -0.06, 0)
-      .setMassProperties(T.mass, { x: 0, y: -0.24, z: 0.05 }, { x: 3300, y: 3700, z: 750 }, { x: 0, y: 0, z: 0, w: 1 })
+    const { body: hb, cabin: hc } = DEFAULT_CHASSIS;
+    const main = RAPIER.ColliderDesc.cuboid(hb.half.x, hb.half.y, hb.half.z)
+      .setTranslation(hb.at.x, hb.at.y, hb.at.z)
+      .setMassProperties(T.mass, CENTRE_OF_MASS, inertia(T.mass), { x: 0, y: 0, z: 0, w: 1 })
       .setFriction(0.35)
       .setRestitution(0.15)
       .setCollisionGroups(playerGroups)
       .setActiveEvents(RAPIER.ActiveEvents.CONTACT_FORCE_EVENTS)
       .setContactForceEventThreshold(9000);
-    const cabin = RAPIER.ColliderDesc.cuboid(0.74, 0.24, 1.3)
-      .setTranslation(0, 0.5, -0.3)
+    const cabin = RAPIER.ColliderDesc.cuboid(hc.half.x, hc.half.y, hc.half.z)
+      .setTranslation(hc.at.x, hc.at.y, hc.at.z)
       .setDensity(0)
       .setFriction(0.3)
       .setCollisionGroups(playerGroups)
@@ -98,17 +117,8 @@ export class VehicleSim {
     const vc = world.createVehicleController(this.body);
     vc.indexUpAxis = 1;
     vc.setIndexForwardAxis = 2;
-    const restCenterY = layout.radius - T.rideHeight; // wheel centre in body space at rest
-    const restLen = T.suspensionRest - (9.81 / (4 * T.stiffness)); // expected static compression
-    const connY = restCenterY + restLen;
-    const positions = [
-      { x: layout.track, z: layout.frontAxleZ },
-      { x: -layout.track, z: layout.frontAxleZ },
-      { x: layout.track, z: layout.rearAxleZ },
-      { x: -layout.track, z: layout.rearAxleZ },
-    ];
-    positions.forEach((p, i) => {
-      vc.addWheel({ x: p.x, y: connY, z: p.z }, { x: 0, y: -1, z: 0 }, { x: -1, y: 0, z: 0 }, T.suspensionRest, layout.radius);
+    wheelPoints(layout).forEach((p, i) => {
+      vc.addWheel(p, { x: 0, y: -1, z: 0 }, { x: -1, y: 0, z: 0 }, T.suspensionRest, layout.radius);
       vc.setWheelSuspensionStiffness(i, T.stiffness);
       vc.setWheelSuspensionCompression(i, T.compression);
       vc.setWheelSuspensionRelaxation(i, T.relaxation);
@@ -118,6 +128,33 @@ export class VehicleSim {
       vc.setWheelSideFrictionStiffness(i, T.sideStiffness);
     });
     this.controller = vc;
+  }
+
+  /** Set the chassis mass, centre of mass and inertia from the tuning (and re-enable the cabin box). */
+  applyMass() {
+    const [main, cabin] = this.chassisColliders;
+    main.setMassProperties(this.tune.mass, CENTRE_OF_MASS, inertia(this.tune.mass), { x: 0, y: 0, z: 0, w: 1 });
+    cabin.setEnabled(true);
+  }
+
+  /**
+   * Turn this into a different car without replacing the rigid body (other systems hold on to it):
+   * new wheel positions and size, collision boxes, mass and handling.
+   */
+  fit(layout: WheelLayout, handling: Partial<Tuning>, chassis: ChassisBoxes) {
+    this.layout = layout;
+    this.tune = { ...TUNING, ...handling };
+    const vc = this.controller;
+    wheelPoints(layout).forEach((p, i) => {
+      vc.setWheelChassisConnectionPointCs(i, p);
+      vc.setWheelRadius(i, layout.radius);
+    });
+    const [main, cabin] = this.chassisColliders;
+    main.setHalfExtents(chassis.body.half);
+    main.setTranslationWrtParent(chassis.body.at);
+    this.applyMass();
+    cabin.setHalfExtents(chassis.cabin.half);
+    cabin.setTranslationWrtParent(chassis.cabin.at);
   }
 
   /** Signed speed along the car's forward axis, m/s. */
@@ -138,7 +175,7 @@ export class VehicleSim {
   }
 
   drive(dt: number, input: DriveInput) {
-    const T = TUNING;
+    const T = this.tune;
     const vc = this.controller;
     const speed = this.forwardSpeed();
     const abs = Math.abs(speed);
@@ -190,7 +227,7 @@ export class VehicleSim {
         this.braking = true;
       }
       vc.setWheelBrake(i, b);
-      vc.setWheelFrictionSlip(i, !rear ? T.frictionFront : input.handbrake ? T.frictionRearHandbrake : T.frictionRear);
+      vc.setWheelFrictionSlip(i, (!rear ? T.frictionFront : input.handbrake ? T.frictionRearHandbrake : T.frictionRear) * this.grip);
     }
 
     vc.updateVehicle(dt, undefined, RAY_GROUPS);
@@ -288,6 +325,27 @@ export class VehicleSim {
     this.world.removeVehicleController(this.controller);
     this.world.removeRigidBody(this.body);
   }
+}
+
+const CENTRE_OF_MASS = { x: 0, y: -0.24, z: 0.05 };
+/** Principal inertia, scaled from the saloon's by mass. */
+const inertia = (mass: number) => {
+  const k = mass / TUNING.mass;
+  return { x: 3300 * k, y: 3700 * k, z: 750 * k };
+};
+
+/** Wheel suspension mounts in body space (FL, FR, RL, RR). */
+function wheelPoints(layout: WheelLayout) {
+  const T = TUNING;
+  const restCenterY = layout.radius - T.rideHeight; // wheel centre in body space at rest
+  const restLen = T.suspensionRest - (9.81 / (4 * T.stiffness)); // expected static compression
+  const y = restCenterY + restLen;
+  return [
+    { x: layout.track, y, z: layout.frontAxleZ },
+    { x: -layout.track, y, z: layout.frontAxleZ },
+    { x: layout.track, y, z: layout.rearAxleZ },
+    { x: -layout.track, y, z: layout.rearAxleZ },
+  ];
 }
 
 const THREE_CLAMP = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));

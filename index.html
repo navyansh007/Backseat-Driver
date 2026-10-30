@@ -31,19 +31,27 @@
       <div class="title-left">
         <h1>backseat <b>driver</b></h1>
         <p class="tag">a remote-controlled drive through a multi-storey car park.<br />your phone is the remote.</p>
+        <div class="modes" id="modes" role="radiogroup" aria-label="Game mode">
+          <button class="mode" data-mode="casual" role="radio"><b>casual</b><small>cruise, jump, wreck the car park</small></button>
+          <button class="mode" data-mode="action" role="radio"><b>action</b><small>survive waves of black saloons</small></button>
+        </div>
         <ol class="steps">
           <li><span>1</span>scan the code with your phone's camera</li>
           <li><span>2</span>drag your thumb on the touchpad to drive</li>
-          <li><span>3</span>left thumb: guns &amp; missiles</li>
-          <li><span>4</span>hit the striped ramps · find the gap on the roof…</li>
+          <li class="for-casual"><span>3</span>left thumb: guns &amp; missiles</li>
+          <li class="for-casual"><span>4</span>hit the striped ramps · find the gap on the roof…</li>
+          <li class="for-action"><span>3</span>left thumb: guns, missiles &amp; five traps</li>
+          <li class="for-action"><span>4</span>wreck every wave before they wreck you</li>
         </ol>
         <button id="kb-start" class="ghost">or drive with the keyboard <kbd>enter</kbd></button>
       </div>
+      <div class="garage" id="garage" aria-label="Choose your car"></div>
       <div class="qr-card" id="qr-card">
         <div class="qr-head">
           <span class="dot" id="qr-dot"></span>
           <span id="qr-status">waiting for phone</span>
         </div>
+        <div class="qr-mode" id="qr-mode">casual remote</div>
         <canvas id="qr"></canvas>
         <div class="room">room <b id="room-code">—</b></div>
         <a class="url" id="qr-url" target="_blank" rel="noopener"></a>
@@ -72,9 +80,30 @@
         <span><kbd>Q</kbd> pairing code</span>
         <span><kbd>M</kbd> mute</span>
         <span><kbd>B</kbd> music</span>
+        <span class="for-action"><kbd>1–5</kbd> traps</span>
         <span><kbd>H</kbd> hide</span>
       </div>
+      <div id="action-hud" class="action-hud for-action">
+        <div class="armour">
+          <span id="a-wave">wave —</span>
+          <div class="bar"><i id="a-hp"></i><em id="a-hp-text">100%</em></div>
+          <span id="a-foes">—</span>
+        </div>
+        <div class="a-score"><small>score</small><b id="a-score">0</b></div>
+        <div class="feed" id="a-feed"></div>
+        <div class="trap-tray" id="a-traps"></div>
+        <div class="threats" id="a-threats"></div>
+      </div>
       <div class="sound-note" id="sound-note">click anywhere for sound</div>
+    </div>
+
+    <div class="vignette for-action" id="a-vignette"></div>
+    <div class="banner" id="a-banner"><small id="a-banner-sub"></small><h2 id="a-banner-title"></h2><p id="a-banner-note"></p></div>
+    <div class="wrecked" id="a-over">
+      <small>game over</small>
+      <h2>wrecked</h2>
+      <p id="a-over-stats"></p>
+      <button class="ghost" id="a-restart">go again <kbd>enter</kbd></button>
     </div>
 
     <div id="letterbox" class="letterbox"><i></i><i></i></div>

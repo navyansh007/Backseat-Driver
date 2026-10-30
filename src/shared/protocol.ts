@@ -26,7 +26,32 @@ export interface TelemetryMsg {
   hot?: boolean;
   /** missile lock on a target */
   lock?: boolean;
+  // ---- action mode only
+  /** armour left, 0–1 */
+  hp?: number;
+  wave?: number;
+  /** pursuers still alive */
+  foes?: number;
+  /** fighting a wave, the break before the next one, or wrecked */
+  st?: ActionState;
+  /** seconds until the next wave (during a break) */
+  next?: number;
+  score?: number;
+  /** charges ready per trap, in TRAP_KINDS order */
+  tc?: number[];
+  /** recharge progress of the next charge per trap, 0–1 (1 = full) */
+  tk?: number[];
+  /** radar: [bearing in degrees (0 = ahead, + = right), distance in m] per pursuer, flattened */
+  rad?: number[];
 }
+
+export type ActionState = 'fight' | 'break' | 'over';
+
+export const GAME_MODES = ['casual', 'action'] as const;
+export type GameMode = (typeof GAME_MODES)[number];
+/** Gadgets the car can drop in action mode. */
+export const TRAP_KINDS = ['spikes', 'oil', 'mine', 'smoke', 'emp'] as const;
+export type TrapKind = (typeof TRAP_KINDS)[number];
 
 /** Chase-camera views the phone can pick. */
 export const CAM_VIEWS = ['chase', 'far', 'bumper'] as const;
@@ -44,6 +69,10 @@ export type RendererChoice = 'webgpu' | 'webgl';
 
 /** Game settings the phone can change. */
 export interface Settings {
+  /** casual drive, or action: waves of pursuers */
+  mode: GameMode;
+  /** which car you drive: an id from CARS (shared/cars.ts) */
+  car: string;
   cam: CamView;
   /** index into ASSIST_NAMES */
   assist: number;
@@ -80,7 +109,8 @@ export interface SettingsMsg extends Settings {
  * the game ignores an `id` it has already seen.
  */
 export type CommandMsg = { t: 'cmd'; id: string } & (
-  | { c: 'start' | 'menu' | 'reset' | 'respawn' }
+  | { c: 'start' | 'menu' | 'reset' | 'respawn' | 'restart' }
+  | { c: 'trap'; k: TrapKind }
   | { [K in SettingKey]: { c: 'set'; k: K; v: Settings[K] } }[SettingKey]
 );
 

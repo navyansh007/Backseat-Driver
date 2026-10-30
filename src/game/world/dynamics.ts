@@ -49,6 +49,11 @@ export class ParkedCars {
     }
   }
 
+  /** Each model and the set that draws it (for their wreck shells). */
+  models() {
+    return [...this.sets.values()];
+  }
+
   place(kind: string, x: number, y: number, z: number, yaw: number, color: number, kinematic = false) {
     const entry = this.sets.get(kind)!;
     const { spec } = entry;

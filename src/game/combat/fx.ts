@@ -1,7 +1,7 @@
 import * as THREE from 'three/webgpu';
 import {
   Discard, Fn, Loop, attribute, cameraProjectionMatrix, clamp, dot, float, floor, fract, max, mix, modelViewMatrix, normalGeometry,
-  normalize, positionGeometry, pow, smoothstep, texture, transformNormalToView, uniform, uv, varying, varyingProperty, vec3, vec4,
+  normalize, positionGeometry, pow, smoothstep, step, texture, transformNormalToView, uniform, uv, varying, varyingProperty, vec3, vec4,
 } from 'three/tsl';
 import type { Node } from 'three/webgpu';
 import { billboardGeometry, billboardVertex, dynamicInstanced } from '../render/billboard';
@@ -55,9 +55,15 @@ export class Particles {
     mat.depthWrite = false;
     mat.fog = false;
     mat.blending = additive ? THREE.AdditiveBlending : THREE.NormalBlending;
-    mat.vertexNode = billboardVertex(attribute('aCenter', 'vec4'), attribute('aAngle', 'float'));
+    // Puffs fade out as the camera gets inside them, and are dropped once it is: a big soft
+    // particle right in front of the lens covers the whole screen, and a few dozen of those
+    // stacked up (a smoke screen, a burning wreck) cost more GPU time than the rest of the frame.
+    const aCenter = attribute('aCenter', 'vec4');
+    const depth = modelViewMatrix.mul(vec4(aCenter.xyz, 1.0)).z.negate();
+    const near = smoothstep(0.35, 1.2, depth.div(aCenter.w.max(0.001)));
+    mat.vertexNode = billboardVertex(aCenter, attribute('aAngle', 'float'), step(0.002, near));
     const vC = varying(attribute('aColor', 'vec3'));
-    const vA = varying(attribute('aAlpha', 'float'));
+    const vA = varying(attribute('aAlpha', 'float').mul(near));
     mat.fragmentNode = Fn(() => {
       const a = texture(SMOKE_TEX(), uv()).a.mul(vA);
       Discard(a.lessThan(0.003));

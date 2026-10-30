@@ -245,6 +245,110 @@ export class CarAudio {
     thump.stop(t + 0.35);
   }
 
+  /** Filtered noise burst through the effects bus. */
+  private noiseHit(filter: BiquadFilterType, freq: number, q: number, gain: number, len: number, delay = 0) {
+    if (!this.ctx) return;
+    const ctx = this.ctx;
+    const t = ctx.currentTime + delay;
+    const src = ctx.createBufferSource();
+    src.buffer = this.noise;
+    const f = ctx.createBiquadFilter();
+    f.type = filter;
+    f.frequency.value = freq;
+    f.Q.value = q;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(gain, t + 0.01);
+    g.gain.exponentialRampToValueAtTime(0.001, t + len);
+    src.connect(f).connect(g).connect(this.sfx);
+    src.start(t, Math.random());
+    src.stop(t + len + 0.05);
+    return f;
+  }
+
+  /** A tone sweeping from f0 to f1 through the effects bus. */
+  private tone(type: OscillatorType, f0: number, f1: number, gain: number, len: number, delay = 0) {
+    if (!this.ctx) return;
+    const ctx = this.ctx;
+    const t = ctx.currentTime + delay;
+    const o = ctx.createOscillator();
+    o.type = type;
+    o.frequency.setValueAtTime(f0, t);
+    o.frequency.exponentialRampToValueAtTime(f1, t + len);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(gain, t + 0.012);
+    g.gain.exponentialRampToValueAtTime(0.001, t + len);
+    o.connect(g).connect(this.sfx);
+    o.start(t);
+    o.stop(t + len + 0.05);
+  }
+
+  /** A pursuer's rifle round, quieter with distance. */
+  enemyShot(dist: number) {
+    const k = Math.max(0.06, 1 - dist / 90);
+    this.noiseHit('bandpass', 1100 + Math.random() * 400, 0.9, 0.42 * k, 0.12);
+    this.tone('square', 120, 45, 0.16 * k, 0.07);
+  }
+
+  /** A round striking the player's car. */
+  ricochet() {
+    this.noiseHit('highpass', 3200, 0.7, 0.3, 0.06);
+    this.tone('sine', 2400 + Math.random() * 1200, 900, 0.07, 0.16);
+  }
+
+  /** Dropping a trap from the boot. */
+  deploy(kind: 'spikes' | 'oil' | 'mine' | 'smoke' | 'emp') {
+    switch (kind) {
+      case 'spikes':
+        for (let i = 0; i < 4; i++) this.noiseHit('bandpass', 2600 + i * 300, 4, 0.22, 0.07, i * 0.05);
+        this.tone('triangle', 520, 380, 0.08, 0.2);
+        break;
+      case 'oil':
+        this.noiseHit('lowpass', 700, 0.8, 0.5, 0.5);
+        this.tone('sine', 180, 60, 0.18, 0.35);
+        break;
+      case 'mine':
+        this.noiseHit('bandpass', 1800, 6, 0.25, 0.06);
+        this.tone('sine', 1400, 1400, 0.1, 0.09, 0.15);
+        break;
+      case 'smoke': {
+        const f = this.noiseHit('highpass', 1400, 0.5, 0.45, 1.6);
+        if (f && this.ctx) f.frequency.exponentialRampToValueAtTime(500, this.ctx.currentTime + 1.6);
+        break;
+      }
+      case 'emp':
+        this.tone('sawtooth', 90, 2400, 0.22, 0.5);
+        this.tone('square', 2400, 60, 0.14, 0.9, 0.05);
+        this.noiseHit('bandpass', 5000, 2, 0.3, 0.8);
+        break;
+    }
+  }
+
+  /** Armed-mine chirp. */
+  beep(high: boolean) {
+    this.tone('sine', high ? 2200 : 1500, high ? 2200 : 1500, 0.09, 0.07);
+  }
+
+  /** Electrical crackle on an EMP'd car. */
+  crackle() {
+    this.noiseHit('highpass', 4200, 1, 0.12, 0.05);
+  }
+
+  /** New wave: a two-tone siren. */
+  siren() {
+    for (let i = 0; i < 3; i++) {
+      this.tone('triangle', 660, 660, 0.12, 0.28, i * 0.6);
+      this.tone('triangle', 880, 880, 0.12, 0.28, i * 0.6 + 0.3);
+    }
+  }
+
+  /** Wave cleared / repair kit picked up: a short rising chime. */
+  chime(big = false) {
+    const notes = big ? [523, 659, 784, 1047] : [784, 1175];
+    notes.forEach((f, i) => this.tone('sine', f, f, 0.14, 0.4, i * 0.09));
+  }
+
   /** One machine-gun round: sharp noise crack plus a low punch. */
   gunshot() {
     if (!this.ctx) return;

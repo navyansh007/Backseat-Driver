@@ -13,6 +13,8 @@ export interface WeaponInput {
 export interface WeaponEvents {
   gunshot(): void;
   launch(): void;
+  /** a round struck something at p */
+  hit?(p: THREE.Vector3): void;
 }
 
 const FIRE_INTERVAL = 1 / 13;
@@ -75,12 +77,12 @@ export class Weapons {
       shroud.rotation.x = Math.PI / 2;
       shroud.position.z = -0.14;
       g.add(barrel, shroud);
-      g.position.set(s * 0.42, bodyY(0.34), 2.36);
+      g.userData.side = s;
       this.guns.push(g);
       car.root.add(g);
     }
     this.muzzleLight = new THREE.PointLight(0xffc070, 0, 14, 2);
-    this.muzzleLight.position.set(0, bodyY(0.4), 3.0);
+    this.muzzleLight.position.set(0, bodyY(0.4), 3.0); // moved to the car's nose by fit()
     car.root.add(this.muzzleLight);
 
     // roof launcher: four tubes on a lifting rail, hidden in the roof when stowed
@@ -94,8 +96,8 @@ export class Weapons {
       tube.position.set((i % 2 ? 0.14 : -0.14), i < 2 ? 0.045 : -0.045, 0.44);
       this.launcher.add(tube);
     }
-    this.launcher.position.set(0, bodyY(1.3), -0.45);
     car.root.add(this.launcher);
+    this.fit();
 
     // missile pool
     const mBody = new THREE.MeshStandardMaterial({ color: 0xe9ecef, roughness: 0.4, metalness: 0.3 });
@@ -118,6 +120,25 @@ export class Weapons {
       obj.visible = false;
       scene.add(obj);
       this.pool.push({ obj, pos: new THREE.Vector3(), vel: new THREE.Vector3(), target: null, age: 0, active: false });
+    }
+  }
+
+  /** Move the guns, muzzle flash and launcher to the current car's mounting points. */
+  fit() {
+    const { gun, launcher } = this.car.def.mounts;
+    const bodyY = (y: number) => y - TUNING.rideHeight;
+    for (const g of this.guns) g.position.set(g.userData.side * gun[0], bodyY(gun[1]), gun[2]);
+    this.placeGuns();
+    this.muzzleLight.position.set(0, bodyY(gun[1] + 0.06), gun[2] + 0.64);
+    this.launcher.position.set(0, bodyY(launcher[0]) + this.launcherUp * 0.3, launcher[1]);
+  }
+
+  /** Guns slide forward out of the bumper, or rise out of the bonnet, as they deploy. */
+  private placeGuns() {
+    const { gun, gunLift } = this.car.def.mounts;
+    for (const g of this.guns) {
+      g.position.z = gun[2] + (gunLift ? 0 : this.gunsOut * 0.3);
+      g.position.y = gun[1] - TUNING.rideHeight + (gunLift ? this.gunsOut * gunLift : 0);
     }
   }
 
@@ -156,7 +177,8 @@ export class Weapons {
     if (this.overheated && this.heat < 0.35) this.overheated = false;
     const wantGun = active && input.gun && !this.overheated;
     this.gunsOut += ((wantGun ? 1 : 0) - this.gunsOut) * Math.min(1, dt * (wantGun ? 18 : 3));
-    this.guns.forEach((g) => (g.position.z = 2.36 + this.gunsOut * 0.3));
+    const mount = this.car.def.mounts;
+    this.placeGuns();
     this.cooldown -= dt;
     this.muzzleLight.intensity *= Math.exp(-dt * 40);
     if (wantGun && this.gunsOut > 0.6 && this.cooldown <= 0) {
@@ -189,7 +211,7 @@ export class Weapons {
     this.launcherTimer -= dt;
     const up = this.launcherTimer > 0 ? 1 : 0;
     this.launcherUp += (up - this.launcherUp) * Math.min(1, dt * 7);
-    this.launcher.position.y = 1.3 - TUNING.rideHeight + this.launcherUp * 0.3;
+    this.launcher.position.y = mount.launcher[0] - TUNING.rideHeight + this.launcherUp * 0.3;
     this.launcher.rotation.x = -this.launcherUp * 0.12;
     this.launcher.visible = this.launcherUp > 0.02;
 
@@ -199,7 +221,7 @@ export class Weapons {
   /** True when nothing solid sits between the roof launcher and the target's body. */
   private inSight(target: RAPIER.RigidBody) {
     const root = this.car.root;
-    const from = new THREE.Vector3(0, 1.3 - TUNING.rideHeight + 0.3, 0).applyQuaternion(root.quaternion).add(root.position);
+    const from = new THREE.Vector3(0, this.car.def.mounts.launcher[0] - TUNING.rideHeight + 0.3, 0).applyQuaternion(root.quaternion).add(root.position);
     const t = target.translation();
     const dir = new THREE.Vector3(t.x, t.y + 0.7, t.z).sub(from);
     const len = dir.length();
@@ -230,6 +252,7 @@ export class Weapons {
     if (hit) {
       const n = new THREE.Vector3(hit.normal.x, hit.normal.y, hit.normal.z);
       this.fx.impactSparks(end, n, 5);
+      this.events.hit?.(end);
       const body = hit.collider.parent();
       if (body) {
         if (body.isDynamic()) body.applyImpulseAtPoint({ x: dir.x * 40, y: dir.y * 40, z: dir.z * 40 }, end, true);
@@ -250,7 +273,7 @@ export class Weapons {
     this.missiles--;
     const root = this.car.root;
     const tube = (MAX_MISSILES - this.missiles - 1) % 4;
-    const local = new THREE.Vector3(tube % 2 ? 0.14 : -0.14, 1.3 - TUNING.rideHeight + 0.35, 0.1);
+    const local = new THREE.Vector3(tube % 2 ? 0.14 : -0.14, this.car.def.mounts.launcher[0] - TUNING.rideHeight + 0.35, this.car.def.mounts.launcher[1] + 0.55);
     m.pos.copy(local).applyQuaternion(root.quaternion).add(root.position);
     const lv = this.car.body.linvel();
     m.vel.set(0, 0.2, 1).normalize().multiplyScalar(24).applyQuaternion(root.quaternion).add(new THREE.Vector3(lv.x, 0, lv.z));

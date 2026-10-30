@@ -9,9 +9,20 @@ Inspired by the remote-controlled car chase in *Tomorrow Never Dies* (1997). All
 - **Phone remote.** A full-screen, retro, landscape remote with one round touchpad for driving, two fire buttons, quick **CAM** / **RESET** keys and a **SETUP** sheet that controls every game setting. Scan the QR code on the game screen to pair. The phone talks to the game directly over WebRTC, so input doesn't go through a server.
 - **Driving.** Raycast-vehicle physics (Rapier) with rear-wheel drive, suspension, speed-sensitive steering, skid marks, tyre smoke and a synthesized engine.
 - **Steering assist.** Counter-steer, spin control, traction control and obstacle avoidance. Press `V` to choose off, light, medium or strong.
-- **Weapons.** Twin bumper machine guns with heat build-up and a roof launcher with four homing missiles.
-- **Destruction.** Cars, barrels, boxes, barriers, trolleys and glass break, explode and burn. Anything wrecked respawns once it is out of the camera's view.
+- **Cars.** Choose on the title screen (or from the phone's **SETUP** sheet): the *BMV 750 iL*, a long executive saloon, or the *Ashton Martyn DB10*, a low, fast grand tourer with lofted, curved bodywork. Each car has its own handling, and they swap in place without reloading. To add a car, add an entry to `src/shared/cars.ts` and `src/game/cars/roster.ts`.
+- **Weapons.** Twin machine guns with heat build-up and a launcher with four homing missiles: in the bumper and roof of the saloon, rising out of the bonnet of the DB10.
+- **Destruction.** Cars, barrels, boxes, barriers, trolleys and glass break, explode and burn. A destroyed car is blown into the air and lands as a burnt-out shell: cabin and doors torn away, sooty dented bodywork, bare seat frames and glowing embers. It burns, then smoulders, and is light enough to shove aside with your car. Anything wrecked respawns once it is out of the camera's view.
 - **The world.** A spacious two-level car park with ramps and a roof jump, parked cars you can push, traffic, birds, clouds and a rental showroom.
+- **Two modes.** Pick on the title screen (or from the phone's **SETUP** sheet). *Casual* is the free drive. *Action* clears the traffic and sends waves of black saloons after you; the QR code opens the matching remote.
+- **Action mode.** Pursuers drive on the same physics as your car, follow you up and down the car park ramps, ram you (only your weapons and traps can wreck them), and from wave 2 lean out of the windows and shoot. Each wave is bigger, faster, tougher and better armed; armoured executive saloons join from wave 4. Your car has 1000 armour; clearing a wave repairs 30% and restocks the traps, and wrecked pursuers sometimes drop a repair kit.
+- **Traps (action mode).** Five gadgets that drop from the boot, each with charges that recharge:
+  - **Spike strip**: shreds the tyres of anything that crosses it, so it slows, wanders and loses grip.
+  - **Oil slick**: no grip at all, for them or you. A gunshot, a missile or a mine sets it alight.
+  - **Mine**: arms after a moment, only pursuers set it off, and it chain-reacts with other mines and oil.
+  - **Smoke screen**: a trail of thick smoke; pursuers inside it or behind it lose sight of you and can't aim.
+  - **EMP**: kills every engine and gun within 30 m for a few seconds.
+
+  A wreck caused by a trap scores 50% extra.
 - **Soundtrack.** An original score (`bgm.mp3`): the intro plays as you first pull away, then a seamless loop carries the drive.
 
 ## Run it
@@ -39,8 +50,11 @@ npm run preview:public # production build behind the ngrok tunnel
 | Pairing screen / mute / hide hints | **SETUP** | `Q` / `M` / `H` |
 | Music on/off | **SETUP** | `B` |
 | Back to start, volumes, resolution, WebGPU/WebGL | **SETUP** | — |
+| Casual / action mode | title screen or **SETUP** | — |
+| Traps: spikes / oil / mine / smoke / EMP (action) | **SPIKE** **OIL** **MINE** **SMOKE** **EMP** | `1`–`5` |
+| Go again after being wrecked (action) | tap the pad | `Enter` |
 
-Volumes, resolution, steering assist and the graphics backend are remembered by the game's browser. Switching between WebGPU and WebGL reloads the game; the phone reconnects on its own. Browsers only play sound after the game page has been clicked once, so the phone can't unlock sound by itself.
+The action remote adds a radar, an armour bar and the wave count on its LCD. Volumes, resolution, steering assist, the mode, your best action score and the graphics backend are remembered by the game's browser. Switching between WebGPU and WebGL reloads the game; the phone reconnects on its own. Browsers only play sound after the game page has been clicked once, so the phone can't unlock sound by itself.
 
 ## Deploy (free)
 

@@ -228,3 +228,49 @@ button { font: inherit; color: inherit; border: 0; background: none; padding: 0;
   .rotate { display: grid; }
   .device { visibility: hidden; }
 }
+
+/* ---------------------------------------------------------------- action remote */
+body:not(.action) .only-action { display: none !important; }
+body.action .led { display: none; }
+body.action .plate { grid-template-rows: auto auto; }
+body.action .fire { width: clamp(58px, 23vh, 128px); }
+body.action .buttons { padding-top: 4px; }
+body.action .label::after { content: 'combat'; margin-left: 8px; color: #ff8a6a; letter-spacing: 0.24em; }
+
+.lcd-row.armour { gap: 8px; align-items: center; margin-top: 3px; font-size: 11px; text-transform: uppercase; }
+.lcd-row.armour .hp { flex: 1; height: 7px; border: 1px solid rgba(31,42,28,0.55); border-radius: 2px; padding: 1px; }
+.lcd-row.armour .hp i { display: block; height: 100%; width: 100%;
+  background: repeating-linear-gradient(90deg, var(--lcd-ink) 0 5px, transparent 5px 7px); transition: width 0.2s; }
+.lcd-row.armour .hp.low i { animation: blink 0.5s steps(2) infinite; }
+
+.scope { display: block; width: 62px; height: 62px; border-radius: 50%; align-self: center; grid-row: 2;
+  background: radial-gradient(circle, #0f2418, #07120c 70%);
+  box-shadow: 0 0 0 2px #23292f, 0 0 0 3px #737b83, inset 0 2px 8px rgba(0,0,0,0.8); }
+
+.traps { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; margin-top: 8px; }
+.trap { position: relative; height: 44px; border-radius: 9px; cursor: pointer; touch-action: none; overflow: hidden; --k: 1; --cap: #59626b;
+  display: grid; grid-template-rows: 1fr auto; justify-items: center; align-items: center; padding: 4px 2px 5px;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--cap) 80%, #fff 20%), var(--cap) 55%, color-mix(in srgb, var(--cap) 70%, #000 30%));
+  box-shadow: 0 3px 0 #14181c, 0 4px 8px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.22); transition: transform 0.06s, box-shadow 0.06s, filter 0.2s; }
+.trap span { font: 700 9px Inter, sans-serif; letter-spacing: 0.1em; text-transform: uppercase; color: #fff; text-shadow: 0 -1px 0 rgba(0,0,0,0.5); }
+.trap .tp { display: flex; gap: 3px; }
+.trap .tp i { width: 6px; height: 6px; border-radius: 50%; background: rgba(0,0,0,0.45); box-shadow: inset 0 1px 1px rgba(0,0,0,0.6); }
+.trap .tp i.on { background: var(--amber); box-shadow: 0 0 6px var(--amber); }
+/* recharge: a strip filling along the bottom edge */
+.trap::after { content: ''; position: absolute; left: 0; bottom: 0; height: 3px; width: calc(var(--k) * 100%); background: rgba(255, 200, 90, 0.85); }
+.trap.down { transform: translateY(3px); box-shadow: 0 0 0 #14181c, 0 1px 3px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.15); }
+.trap.empty { filter: saturate(0.3) brightness(0.65); }
+.trap[data-k='spikes'] { --cap: #6f7a84; }
+.trap[data-k='oil'] { --cap: #24262b; }
+.trap[data-k='mine'] { --cap: #56603f; }
+.trap[data-k='smoke'] { --cap: #8a9096; }
+.trap[data-k='emp'] { --cap: #2c6ea3; }
+
+.pad-bezel { position: relative; }
+.pad-msg { position: absolute; inset: 3.2%; border-radius: 50%; display: none; place-content: center; justify-items: center; gap: 4px; z-index: 2; cursor: pointer;
+  background: radial-gradient(circle, rgba(60, 14, 10, 0.88), rgba(20, 6, 4, 0.95)); color: #fff; text-align: center; touch-action: none; }
+body.action.over .pad-msg { display: grid; }
+.pad-msg small { font: 700 10px Inter, sans-serif; letter-spacing: 0.3em; text-transform: uppercase; color: #ff8a6a; }
+.pad-msg b { font: 400 clamp(26px, 9vh, 44px) 'Share Tech Mono', monospace; letter-spacing: 0.12em; text-transform: uppercase; }
+.pad-msg span { font: 13px 'Share Tech Mono', monospace; color: var(--amber); }
+.pad-msg em { margin-top: 8px; font: 700 11px Inter, sans-serif; font-style: normal; letter-spacing: 0.2em; text-transform: uppercase; color: #dfe4e8; animation: blink 1.2s steps(2) infinite; }
