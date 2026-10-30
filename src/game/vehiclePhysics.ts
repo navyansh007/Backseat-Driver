@@ -130,6 +130,13 @@ export class VehicleSim {
     this.controller = vc;
   }
 
+  /** Set the chassis mass, centre of mass and inertia from the tuning (and re-enable the cabin box). */
+  applyMass() {
+    const [main, cabin] = this.chassisColliders;
+    main.setMassProperties(this.tune.mass, CENTRE_OF_MASS, inertia(this.tune.mass), { x: 0, y: 0, z: 0, w: 1 });
+    cabin.setEnabled(true);
+  }
+
   /**
    * Turn this into a different car without replacing the rigid body (other systems hold on to it):
    * new wheel positions and size, collision boxes, mass and handling.
@@ -145,7 +152,7 @@ export class VehicleSim {
     const [main, cabin] = this.chassisColliders;
     main.setHalfExtents(chassis.body.half);
     main.setTranslationWrtParent(chassis.body.at);
-    main.setMassProperties(this.tune.mass, CENTRE_OF_MASS, inertia(this.tune.mass), { x: 0, y: 0, z: 0, w: 1 });
+    this.applyMass();
     cabin.setHalfExtents(chassis.cabin.half);
     cabin.setTranslationWrtParent(chassis.cabin.at);
   }

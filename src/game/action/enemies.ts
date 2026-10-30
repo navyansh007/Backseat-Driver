@@ -201,6 +201,11 @@ export class Fleet {
     for (const set of this.sets.values()) for (const mesh of set.meshes) mesh.visible = false;
   }
 
+  /** Each pursuer model and the set that draws it (for their wreck shells). */
+  models() {
+    return [...this.sets].map(([model, set]) => ({ set, spec: SPECS[model] }));
+  }
+
   /** Hide every pursuer mesh (action mode ended). */
   hideAll() {
     for (const set of this.sets.values()) for (const mesh of set.meshes) mesh.visible = false;
@@ -227,6 +232,9 @@ export class Fleet {
       stun: 0, puncture: 0, slick: 0, blind: 0, tag: '', tagUntil: 0, ramCd: 0,
     });
     e.sim.body.setEnabled(true);
+    // a wreck was made light; put the real weight back
+    e.sim.applyMass();
+    if (model === 'executive') e.sim.body.setAdditionalMass(700, false);
     e.sim.reset(x, y, z, yaw);
     e.anchor.set(x, y, z);
     e.sim.grip = 1;

@@ -18,6 +18,7 @@ import { Weapons } from './combat/weapons';
 import { StuntDirector } from './stunts';
 import { useWebGLOutput } from './render/output';
 import { ActionMode } from './action/action';
+import { WreckShells } from './combat/wreckShells';
 import { carDef } from './cars/roster';
 import { CAR_IDS, DEFAULT_CAR } from '../shared/cars';
 import { CarPicker } from './cars/picker';
@@ -134,6 +135,9 @@ async function boot() {
   // ------------------------------------------------------------ combat
   const fx = new CombatFx(scene);
   const wreck = new WreckFx(scene, phys, fx);
+  // destroyed cars become burnt-out shells: a small pool per car model
+  const shells = new WreckShells(phys, scene);
+  for (const { set, spec } of lot.parked.models()) shells.register(set, spec, true, 8);
   const destruction = new Destruction([...lot.parked.entries, ...lot.props.entries], phys, fx, car.body, {
     onExplosion(p, scale) {
       const dist = p.distanceTo(car.position);
@@ -145,7 +149,7 @@ async function boot() {
     onTrafficDestroyed: (body) => life.trafficDestroyed(body),
     onTrafficRespawn: (body) => life.trafficRespawn(body),
     onPlayerBlast: (damage) => action.onPlayerBlast(damage),
-  }, wreck);
+  }, wreck, shells);
   // driving assist level, remembered per browser
   const ASSIST_VALUES = [0, 0.4, 0.7, 1];
   let assistIdx = storedNumber('tnd-assist', 2, 0, ASSIST_VALUES.length - 1);
@@ -210,6 +214,8 @@ async function boot() {
       pushSettings();
     },
   });
+  // pursuers draw their own wheels, so their shells come without
+  for (const { set, spec } of action.fleet.models()) shells.register(set, spec, false, 6);
 
   // stunts: slow-motion cinematics with their own score
   const glass = lot.props.entries.filter((e) => e.kind === 'glass').map((e) => e.body);

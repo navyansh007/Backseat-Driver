@@ -119,10 +119,12 @@ export interface Part {
  */
 export class InstancedBodies {
   readonly meshes: THREE.InstancedMesh[];
-  readonly bodies: RAPIER.RigidBody[] = [];
+  /** null: a spare slot (see reserve) */
+  readonly bodies: (RAPIER.RigidBody | null)[] = [];
   private scales: (THREE.Vector3 | null)[] = [];
   private hidden: boolean[] = [];
-  private offset: THREE.Matrix4;
+  /** applied after each body's pose: where the model sits relative to its body */
+  readonly offset: THREE.Matrix4;
   private m = new THREE.Matrix4();
   private p = new THREE.Vector3();
   private q = new THREE.Quaternion();
@@ -156,6 +158,27 @@ export class InstancedBodies {
     }
     this.write(i);
     return i;
+  }
+
+  /** Add `n` empty, hidden slots that bind() later hands to bodies. */
+  reserve(n: number) {
+    for (let k = 0; k < n; k++) {
+      this.bodies.push(null);
+      this.scales.push(null);
+      this.hidden.push(true);
+      this.write(this.bodies.length - 1);
+    }
+    for (const mesh of this.meshes) {
+      mesh.count = this.bodies.length;
+      mesh.instanceMatrix.needsUpdate = true;
+    }
+    return this;
+  }
+
+  /** Point a slot at a body (shown) or at nothing (hidden). */
+  bind(i: number, body: RAPIER.RigidBody | null) {
+    this.bodies[i] = body;
+    this.setHidden(i, !body);
   }
 
   addTo(parent: THREE.Object3D) {
@@ -196,12 +219,12 @@ export class InstancedBodies {
   }
 
   private write(i: number) {
-    if (this.hidden[i]) {
+    const b = this.bodies[i];
+    if (this.hidden[i] || !b) {
       this.m.makeScale(0, 0, 0);
       for (const mesh of this.meshes) mesh.setMatrixAt(i, this.m);
       return;
     }
-    const b = this.bodies[i];
     const t = b.translation();
     const r = b.rotation();
     this.p.set(t.x, t.y, t.z);
@@ -213,7 +236,8 @@ export class InstancedBodies {
   sync(force: boolean) {
     let dirty = force;
     for (let i = 0; i < this.bodies.length; i++) {
-      if (!force && this.bodies[i].isSleeping()) continue;
+      const b = this.bodies[i];
+      if (!b || (this.hidden[i] && !force) || (!force && b.isSleeping())) continue;
       this.write(i);
       dirty = true;
     }

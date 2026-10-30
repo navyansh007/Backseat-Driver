@@ -4,6 +4,7 @@ import { VehicleSim, TUNING, type DriveInput } from './vehiclePhysics';
 import { buildCar, carMeshes, makeCarMaterials, wheelMesh, type CarMaterials } from './models/carModel';
 import { G, groups } from './physics';
 import type { CarDef } from './cars/roster';
+import { buildWreck } from './models/wreckModel';
 
 export const PLAYER_GROUPS = groups(G.PLAYER, 0xffff);
 
@@ -16,6 +17,8 @@ export class PlayerCar {
   readonly wheels: THREE.Group[] = [];
   /** the bodywork and wheels of the current model (lamps and weapons stay on the root) */
   private model = new THREE.Group();
+  /** the burnt-out shell shown in its place once wrecked */
+  private shell = new THREE.Group();
   private lamps: THREE.SpotLight[] = [];
   /** called after the model changes, so things mounted on the car can move */
   onModel = () => {};
@@ -34,6 +37,9 @@ export class PlayerCar {
       PLAYER_GROUPS,
     );
     this.root.add(this.model);
+    this.shell.visible = false;
+    this.shell.position.y = -TUNING.rideHeight;
+    this.root.add(this.shell);
 
     // headlamp beams for the darker garage interior (kept for good: lights must never leave the scene)
     for (let i = 0; i < 2; i++) {
@@ -79,6 +85,32 @@ export class PlayerCar {
       this.wheels.push(w);
       this.model.add(w);
     }
+    // the wreck of this model, ready for when it's needed
+    for (const part of [...this.shell.children]) {
+      (part as THREE.Mesh).geometry.dispose();
+      this.shell.remove(part);
+    }
+    const tint = new THREE.Color(1, 1, 1).lerp(new THREE.Color(def.paint), 0.18);
+    for (const part of buildWreck(spec, { wheels: true })) {
+      const mesh = new THREE.Mesh(part.geometry, part.material);
+      mesh.castShadow = part.castShadow ?? true;
+      mesh.receiveShadow = part.receiveShadow ?? true;
+      if (part.tinted) {
+        // per-instance tint isn't available on a plain mesh: bake it into the vertex colours
+        const col = part.geometry.getAttribute('color') as THREE.BufferAttribute;
+        const out = new Float32Array(col.count * 3);
+        for (let i = 0; i < col.count; i++) {
+          out[i * 3] = col.getX(i) * tint.r;
+          out[i * 3 + 1] = col.getY(i) * tint.g;
+          out[i * 3 + 2] = col.getZ(i) * tint.b;
+        }
+        mesh.geometry = part.geometry.clone();
+        mesh.geometry.setAttribute('color', new THREE.BufferAttribute(out, 3));
+      }
+      mesh.userData.shell = true;
+      this.shell.add(mesh);
+    }
+
     const [hx, hy, hz] = def.mounts.headlamp;
     this.lamps.forEach((spot, i) => {
       const s = i === 0 ? 1 : -1;
@@ -112,8 +144,14 @@ export class PlayerCar {
         const l = o as THREE.Light;
         l.userData.on ??= l.intensity;
         l.intensity = on ? l.userData.on : 0;
-      } else if ((o as THREE.Mesh).isMesh) o.visible = on;
+      } else if ((o as THREE.Mesh).isMesh && !o.userData.shell) o.visible = on;
     });
+  }
+
+  /** Wrecked: the car is replaced by its burnt-out shell (and its lamps go dark). */
+  setWrecked(on: boolean) {
+    this.setShown(!on);
+    this.shell.visible = on;
   }
 
   /** Save the post-step pose for interpolation. */

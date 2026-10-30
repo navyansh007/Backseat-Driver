@@ -175,7 +175,7 @@ export class ActionMode {
     this.kills = 0;
     this.breakLeft = FIRST_BREAK;
     this.destruction.targets = 'transient';
-    this.car.setShown(true);
+    this.car.setWrecked(false);
     this.ui.over.classList.remove('show');
     this.banner('get ready', 'black saloons inbound', 'guns · missiles · traps (1–5)', FIRST_BREAK);
   }
@@ -186,7 +186,7 @@ export class ActionMode {
     this.fleet.hideAll();
     this.state = 'idle';
     this.destruction.targets = 'all';
-    this.car.setShown(true);
+    this.car.setWrecked(false);
     this.car.sim.grip = 1;
     this.ui.over.classList.remove('show');
     this.ui.banner.classList.remove('show');
@@ -364,7 +364,7 @@ export class ActionMode {
     this.wreck.carExplode(pos, new THREE.Quaternion(r.x, r.y, r.z, r.w), new THREE.Vector3(v.x, v.y, v.z), new THREE.Vector3(spec.W, spec.H, spec.L), new THREE.Color(this.car.def.paint), pos.y);
     this.fx.explosion(pos.clone().setY(pos.y + 0.8), 1.4);
     this.audio.explosion(0, 1.4);
-    this.car.setShown(false);
+    this.car.setWrecked(true);
     if (this.score > this.best) {
       this.best = this.score;
       try { localStorage.setItem('tnd-best', String(this.best)); } catch { /* ignore */ }
