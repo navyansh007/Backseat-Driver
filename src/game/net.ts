@@ -1,7 +1,7 @@
 import QRCode from 'qrcode';
 import {
   ICE_SERVERS, LAN_ENDPOINT, RELAY_PATH, makeRoomCode,
-  type CommandMsg, type HostToRemote, type RelayMsg, type RemoteToHost, type SignalMsg,
+  type CommandMsg, type GameMode, type HostToRemote, type RelayMsg, type RemoteToHost, type SignalMsg,
 } from '../shared/protocol';
 
 export interface RemoteState {
@@ -189,7 +189,16 @@ export class RemoteLink {
    * URL the phone should open. Prefers the public tunnel URL (npm run dev:public),
    * then the machine's LAN IP when the game runs on localhost, else the current origin.
    */
-  async remoteUrl() {
+  async remoteUrl(mode: GameMode = 'casual') {
+    this.origin ??= this.findOrigin();
+    const origin = await this.origin;
+    // the action remote has the trap buttons; the phone also follows mode changes live
+    return `${origin}/remote.html?room=${this.room}${mode === 'action' ? '&mode=action' : ''}`;
+  }
+
+  private origin: Promise<string> | null = null;
+
+  private async findOrigin() {
     let origin = location.origin;
     try {
       const res = await fetch(LAN_ENDPOINT);
@@ -199,11 +208,11 @@ export class RemoteLink {
         origin = `${location.protocol}//${info.addresses[0]}:${info.port ?? location.port}`;
       }
     } catch { /* fall back to current origin */ }
-    return `${origin}/remote.html?room=${this.room}`;
+    return origin;
   }
 
-  async drawQR(canvas: HTMLCanvasElement, size: number) {
-    const url = await this.remoteUrl();
+  async drawQR(canvas: HTMLCanvasElement, size: number, mode: GameMode = 'casual') {
+    const url = await this.remoteUrl(mode);
     await QRCode.toCanvas(canvas, url, { width: size, margin: 1, color: { dark: '#0d1117', light: '#ffffff' }, errorCorrectionLevel: 'M' });
     return url;
   }

@@ -59,6 +59,8 @@ export class VehicleSim {
   assist = 0.7;
   /** How much the assist changed the steering this step (for UI/debug). */
   assistSteer = 0;
+  /** Tyre grip multiplier (1 = normal): oil, punctures. */
+  grip = 1;
   braking = false;
   reversing = false;
   engineLoad = 0;
@@ -190,7 +192,7 @@ export class VehicleSim {
         this.braking = true;
       }
       vc.setWheelBrake(i, b);
-      vc.setWheelFrictionSlip(i, !rear ? T.frictionFront : input.handbrake ? T.frictionRearHandbrake : T.frictionRear);
+      vc.setWheelFrictionSlip(i, (!rear ? T.frictionFront : input.handbrake ? T.frictionRearHandbrake : T.frictionRear) * this.grip);
     }
 
     vc.updateVehicle(dt, undefined, RAY_GROUPS);

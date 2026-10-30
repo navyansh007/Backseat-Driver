@@ -33,8 +33,10 @@
           <div class="lcd">
             <div class="lcd-row"><b id="speed">000</b><small>km/h</small><em id="gear">N</em></div>
             <div class="lcd-row sub"><span id="status">connecting</span><span id="lockflag" class="lockflag">lock</span></div>
+            <div class="lcd-row armour only-action"><span class="hp"><i id="hp"></i></span><span id="wave">w-</span></div>
           </div>
           <div class="led" id="led" title="link"></div>
+          <canvas class="scope only-action" id="scope" width="128" height="128" aria-label="Radar"></canvas>
         </div>
 
         <div class="keys">
@@ -42,6 +44,8 @@
           <button class="key" id="k-reset" aria-label="Reset car"><i></i><span>reset</span></button>
           <button class="key" id="k-setup" aria-label="Settings"><i></i><span>setup</span></button>
         </div>
+
+        <div class="traps only-action" id="traps"></div>
 
         <div class="buttons">
           <div class="btn-wrap">
@@ -67,6 +71,7 @@
             <div class="trail" id="trail"></div>
             <div class="touch" id="touch"></div>
           </div>
+          <button class="pad-msg" id="pad-msg"><small>game over</small><b>wrecked</b><span id="pad-msg-stats"></span><em>tap to go again</em></button>
         </div>
       </section>
     </main>

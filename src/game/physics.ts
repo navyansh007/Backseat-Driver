@@ -9,6 +9,8 @@ export const G = {
   PLAYER: 0x0002,
   PROP: 0x0004,
   CAR: 0x0008,
+  /** action-mode pursuers */
+  ENEMY: 0x0010,
 } as const;
 
 export const groups = (membership: number, filter: number) => (membership << 16) | filter;
@@ -174,6 +176,16 @@ export class InstancedBodies {
       if (!mesh.instanceColor) continue;
       mesh.setColorAt(i, color);
       mesh.instanceColor.needsUpdate = true;
+    }
+  }
+
+  /** Draw one instance at an explicit pose, for bodies whose owner interpolates them (not registered for sync). */
+  setPose(i: number, p: THREE.Vector3, q: THREE.Quaternion) {
+    if (this.hidden[i]) return;
+    this.m.compose(p, q, this.scales[i] ?? this.s).multiply(this.offset);
+    for (const mesh of this.meshes) {
+      mesh.setMatrixAt(i, this.m);
+      mesh.instanceMatrix.needsUpdate = true;
     }
   }
 

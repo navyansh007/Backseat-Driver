@@ -13,6 +13,8 @@ export interface WeaponInput {
 export interface WeaponEvents {
   gunshot(): void;
   launch(): void;
+  /** a round struck something at p */
+  hit?(p: THREE.Vector3): void;
 }
 
 const FIRE_INTERVAL = 1 / 13;
@@ -230,6 +232,7 @@ export class Weapons {
     if (hit) {
       const n = new THREE.Vector3(hit.normal.x, hit.normal.y, hit.normal.z);
       this.fx.impactSparks(end, n, 5);
+      this.events.hit?.(end);
       const body = hit.collider.parent();
       if (body) {
         if (body.isDynamic()) body.applyImpulseAtPoint({ x: dir.x * 40, y: dir.y * 40, z: dir.z * 40 }, end, true);

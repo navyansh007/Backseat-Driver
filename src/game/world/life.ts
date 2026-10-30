@@ -48,6 +48,8 @@ interface TrafficCar { body: RAPIER.RigidBody; lane: Loop; s: number; v: number;
 
 export class Life {
   private traffic: TrafficCar[] = [];
+  /** traffic drives the perimeter road (off in action mode) */
+  private trafficOn = true;
   private birdL: THREE.InstancedMesh;
   private birdR: THREE.InstancedMesh;
   private birds: { a: number; r: number; h: number; speed: number; flap: number }[] = [];
@@ -113,6 +115,24 @@ export class Life {
     scene.add(this.clouds);
   }
 
+  /** Bodies of every traffic car. */
+  get trafficBodies() {
+    return this.traffic.map((c) => c.body);
+  }
+
+  /** Stop or restart the traffic. The caller takes the cars out of the world (see Destruction.setSuspended). */
+  setTraffic(on: boolean) {
+    this.trafficOn = on;
+    if (!on) return;
+    for (const car of this.traffic) {
+      car.dead = false;
+      car.v = 0;
+      const yaw = car.lane.sample(car.s, this.tmp);
+      car.body.setTranslation({ x: this.tmp.x, y: 0, z: this.tmp.z }, true);
+      car.body.setRotation(this.q.setFromAxisAngle(UP, yaw), true);
+    }
+  }
+
   /** A traffic car was destroyed: stop driving it (physics takes over). */
   trafficDestroyed(body: RAPIER.RigidBody) {
     const car = this.traffic.find((c) => c.body === body);
@@ -139,7 +159,7 @@ export class Life {
 
     // traffic: simple car-following + yield to the player
     for (const car of this.traffic) {
-      if (car.dead) continue;
+      if (car.dead || !this.trafficOn) continue;
       let target = car.vmax;
       const yaw = car.lane.sample(car.s, this.tmp);
       const fx = Math.sin(yaw), fz = Math.cos(yaw);

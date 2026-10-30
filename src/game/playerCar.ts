@@ -56,6 +56,20 @@ export class PlayerCar {
     return this.sim.body;
   }
 
+  /**
+   * Show or hide the car (it's hidden while wrecked). The lights stay in the scene and only go dark:
+   * adding or removing a light makes the renderer rebuild every material, a second-long stall.
+   */
+  setShown(on: boolean) {
+    this.root.traverse((o) => {
+      if ((o as THREE.Light).isLight) {
+        const l = o as THREE.Light;
+        l.userData.on ??= l.intensity;
+        l.intensity = on ? l.userData.on : 0;
+      } else if ((o as THREE.Mesh).isMesh) o.visible = on;
+    });
+  }
+
   /** Save the post-step pose for interpolation. */
   capture() {
     this.prevPos.copy(this.currPos);

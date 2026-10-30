@@ -23,6 +23,11 @@ interface Destructible extends Entry {
   disturbedAt: number;
   explosive: boolean;
   size: number;
+  /** added at runtime (action-mode enemies): never respawned, removed by its owner */
+  transient?: boolean;
+  /** taken out of the world for now (traffic in action mode) */
+  suspended?: boolean;
+  onDestroyed?: () => void;
 }
 
 interface PendingBlast {
@@ -38,6 +43,8 @@ export interface DestructionHooks {
   onExplosion(p: THREE.Vector3, scale: number): void;
   onTrafficDestroyed(body: RAPIER.RigidBody): void;
   onTrafficRespawn(body: RAPIER.RigidBody): void;
+  /** A blast reached the player's car; `damage` is already scaled by distance. */
+  onPlayerBlast?(damage: number, p: THREE.Vector3): void;
 }
 
 /**
@@ -56,6 +63,8 @@ export class Destruction {
   private pm = new THREE.Matrix4();
   private sphere = new THREE.Sphere();
   destroyedCount = 0;
+  /** What missiles may lock on to: every car, or only the transient ones (action-mode enemies). */
+  targets: 'all' | 'transient' = 'all';
 
   constructor(
     entries: Entry[],
@@ -89,17 +98,66 @@ export class Destruction {
 
   isTarget(body: RAPIER.RigidBody) {
     const d = this.byHandle.get(body.handle);
-    return !!d && !d.dead;
+    return !!d && !d.dead && !d.suspended;
   }
 
   /** Live destructible cars, for missile lock-on. */
   *cars() {
-    for (const d of this.list) if (d.car && !d.dead) yield d.body;
+    for (const d of this.list) {
+      if (d.car && !d.dead && !d.suspended && (this.targets === 'all' || d.transient)) yield d.body;
+    }
+  }
+
+  /** Health left, 0–1 (1 for anything unknown). */
+  health(body: RAPIER.RigidBody) {
+    const d = this.byHandle.get(body.handle);
+    return d ? Math.max(0, d.hp / d.max) : 1;
+  }
+
+  /** Add a car that only lives until it is destroyed (an action-mode enemy). */
+  addTransient(e: Entry, hp: number, onDestroyed: () => void) {
+    const t = e.body.translation();
+    const r = e.body.rotation();
+    const d: Destructible = {
+      ...e, hp, max: hp, homeP: new THREE.Vector3(t.x, t.y, t.z), homeQ: new THREE.Quaternion(r.x, r.y, r.z, r.w),
+      dead: false, deadAt: 0, burnUntil: 0, disturbedAt: 0, explosive: false, size: 2.6, transient: true, onDestroyed,
+    };
+    this.list.push(d);
+    this.byHandle.set(e.body.handle, d);
+  }
+
+  /** Forget a transient car (its owner hides and parks the body). */
+  remove(body: RAPIER.RigidBody) {
+    const d = this.byHandle.get(body.handle);
+    if (!d) return;
+    this.byHandle.delete(body.handle);
+    this.list.splice(this.list.indexOf(d), 1);
+    this.burning.delete(d);
+  }
+
+  /**
+   * Take a car out of the world (hidden, no collisions, not a target) or put it back.
+   * A wreck is restored first, so it comes back whole.
+   */
+  setSuspended(body: RAPIER.RigidBody, on: boolean) {
+    const d = this.byHandle.get(body.handle);
+    if (!d || !!d.suspended === on) return;
+    if (on) {
+      if (d.dead) this.respawn(d);
+      d.suspended = true;
+      d.body.setEnabled(false);
+      d.set.setHidden(d.index, true);
+    } else {
+      d.suspended = false;
+      d.body.setEnabled(true);
+      d.set.setHidden(d.index, false);
+      d.set.refresh(d.index);
+    }
   }
 
   damage(body: RAPIER.RigidBody, amount: number, point?: THREE.Vector3) {
     const d = this.byHandle.get(body.handle);
-    if (!d || d.dead) return;
+    if (!d || d.dead || d.suspended) return;
     d.hp -= amount;
     if (d.car && d.hp < d.max * 0.45) d.burnUntil = Math.max(d.burnUntil, this.time + 0.5); // smoking when badly hurt
     if (d.hp <= 0) this.destroy(d, point);
@@ -131,6 +189,7 @@ export class Destruction {
       d.burnUntil = this.time + 16;
       this.burning.add(d);
       this.queueBlast(c.setY(c.y + 0.8), 7, 32, 8, 1.1, 0); // weak damage so wrecks rarely chain through a whole row
+      d.onDestroyed?.();
     } else {
       // props break apart: hide the instance, park the body, throw debris
       d.set.setHidden(d.index, true);
@@ -163,7 +222,7 @@ export class Destruction {
       body.applyTorqueImpulse({ x: (Math.random() - 0.5) * j * 0.5, y: (Math.random() - 0.5) * j * 0.3, z: (Math.random() - 0.5) * j * 0.5 }, true);
     };
     for (const d of this.list) {
-      if (d.dead && !d.car) continue;
+      if ((d.dead && !d.car) || d.suspended) continue;
       const t = d.body.translation();
       const dx = t.x - b.p.x, dy = t.y - b.p.y, dz = t.z - b.p.z;
       const dist2 = dx * dx + dy * dy + dz * dz;
@@ -172,10 +231,14 @@ export class Destruction {
       if (d.body.isDynamic()) push(d.body, d.body.mass(), k);
       this.damage(d.body, b.damage * k);
     }
-    // the player's car gets thrown around too (no damage)
+    // the player's car gets thrown around too (and, in action mode, hurt)
     const pt = this.player.translation();
     const pd2 = (pt.x - b.p.x) ** 2 + (pt.y - b.p.y) ** 2 + (pt.z - b.p.z) ** 2;
-    if (pd2 < r2) push(this.player, this.player.mass(), (1 - Math.sqrt(pd2) / b.radius) * 0.45);
+    if (pd2 < r2) {
+      const k = 1 - Math.sqrt(pd2) / b.radius;
+      push(this.player, this.player.mass(), k * 0.45);
+      this.hooks.onPlayerBlast?.(b.damage * k, b.p);
+    }
   }
 
   /** Ground height under p (floors of the car park or the lot). */
@@ -205,7 +268,7 @@ export class Destruction {
       if (p.distanceToSquared(playerPos) < 160 * 160) this.fx.burn(p, dt, Math.min(1, (d.burnUntil - this.time) / 4));
     }
     for (const d of this.list) {
-      if (d.car && !d.dead && d.hp < d.max * 0.45 && Math.random() < dt * 5) {
+      if (d.car && !d.dead && !d.suspended && d.hp < d.max * 0.45 && Math.random() < dt * 5) {
         const t = d.body.translation();
         this.fx.smoke.emit(new THREE.Vector3(t.x, t.y + 1.0, t.z), new THREE.Vector3(0, 1.5, 0), { life: 2.5, size: 0.6, grow: 4, color: 0x3a3634, color2: 0x8a857e, gravity: 0.5, drag: 0.6, alpha: 0.55 });
       }
@@ -222,6 +285,7 @@ export class Destruction {
     const cur = new THREE.Vector3();
 
     for (const d of this.list) {
+      if (d.transient || d.suspended) continue;
       const t = d.body.translation();
       cur.set(t.x, t.y, t.z);
       let wants = false;
@@ -248,7 +312,7 @@ export class Destruction {
 
   private homeBlocked(d: Destructible) {
     for (const o of this.list) {
-      if (o === d || !o.car || o.kinematic) continue;
+      if (o === d || !o.car || o.kinematic || o.suspended) continue;
       const t = o.body.translation();
       const dx = t.x - d.homeP.x, dz = t.z - d.homeP.z;
       if (Math.abs(t.y - d.homeP.y) < 2 && dx * dx + dz * dz < 2.8 * 2.8) return true;

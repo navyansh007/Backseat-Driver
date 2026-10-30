@@ -1,5 +1,5 @@
 import {
-  ASSIST_NAMES, CAM_VIEWS, QUALITY_LEVELS,
+  ASSIST_NAMES, CAM_VIEWS, GAME_MODES, QUALITY_LEVELS,
   type CommandMsg, type SettingKey, type Settings, type SettingsMsg,
 } from '../shared/protocol';
 
@@ -22,6 +22,7 @@ const MODULES: { title: string; controls: Control[] }[] = [
     title: 'drive',
     controls: [
       { kind: 'note', id: 'drive-state' },
+      { kind: 'seg', key: 'mode', options: GAME_MODES.map((m) => ({ label: m, value: m })) },
       { kind: 'action', c: 'start', label: 'drive', id: 'act-play' },
       { kind: 'action', c: 'reset', label: 'reset car' },
       { kind: 'action', c: 'respawn', label: 'back to start' },

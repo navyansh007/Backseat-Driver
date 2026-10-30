@@ -17,9 +17,10 @@ import { WreckFx } from './combat/wreck';
 import { Weapons } from './combat/weapons';
 import { StuntDirector } from './stunts';
 import { useWebGLOutput } from './render/output';
+import { ActionMode } from './action/action';
 import {
-  ASSIST_NAMES, CAM_VIEWS, QUALITY_LEVELS,
-  type CommandMsg, type RendererChoice, type Settings, type SettingsMsg,
+  ASSIST_NAMES, CAM_VIEWS, GAME_MODES, QUALITY_LEVELS, TRAP_KINDS,
+  type CommandMsg, type GameMode, type RendererChoice, type Settings, type SettingsMsg,
 } from '../shared/protocol';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -30,7 +31,7 @@ const ui = {
   room: $('room-code'), lanNote: $('lan-note'), qrDot: $('qr-dot'), qrStatus: $('qr-status'), kbStart: $('kb-start'),
   lock: $('lock'), heat: $('heat-fill'), heatBox: $('heat'), pips: $('pips'),
   letterbox: $('letterbox'), card: $('stunt-card'), cardTitle: $('stunt-title'), cardTags: $('stunt-tags'),
-  cardStats: $('stunt-stats'), cardPoints: $('stunt-points'),
+  cardStats: $('stunt-stats'), cardPoints: $('stunt-points'), modes: $('modes'), qrMode: $('qr-mode'), restart: $('a-restart'),
 };
 
 let toastTimer = 0;
@@ -85,13 +86,18 @@ async function boot() {
   const scene = new THREE.Scene();
   const link = new RemoteLink();
   ui.room.textContent = link.room;
-  void link.drawQR(ui.qr, 260).then((url) => {
+  // casual or action: ?mode= wins, then the last choice on this browser
+  const urlMode = new URLSearchParams(location.search).get('mode');
+  let mode: GameMode = GAME_MODES.find((m) => m === urlMode) ?? (storageGet('tnd-mode') === 'action' ? 'action' : 'casual');
+  // each mode has its own remote: the QR opens the matching one
+  const drawQR = () => void link.drawQR(ui.qr, 260, mode).then((url) => {
     ui.qrUrl.textContent = url.replace(/^https?:\/\//, '');
     ui.qrUrl.href = url;
     // a LAN address only works on the same network; a public URL works from anywhere
     const lan = /^(10|127|192\.168|172\.(1[6-9]|2\d|3[01]))\./.test(new URL(url).hostname);
     ui.lanNote.textContent = lan ? 'phone and computer must be on the same wi-fi' : 'same wi-fi is fastest · mobile data works too';
   });
+  drawQR();
 
   ui.loadingText.textContent = 'starting the physics engine…';
   await nextFrame();
@@ -130,6 +136,7 @@ async function boot() {
     },
     onTrafficDestroyed: (body) => life.trafficDestroyed(body),
     onTrafficRespawn: (body) => life.trafficRespawn(body),
+    onPlayerBlast: (damage) => action.onPlayerBlast(damage),
   }, wreck);
   // driving assist level, remembered per browser
   const ASSIST_VALUES = [0, 0.4, 0.7, 1];
@@ -176,6 +183,23 @@ async function boot() {
   const weapons = new Weapons(scene, car, phys, fx, destruction, {
     gunshot: () => audio.gunshot(),
     launch: () => audio.launch(),
+    hit: (p) => action.onGunHit(p),
+  });
+
+  // action mode: waves of pursuers, armour, traps
+  const action = new ActionMode(scene, phys, car, fx, destruction, wreck, audio, {
+    root: $('action-hud'), wave: $('a-wave'), hp: $('a-hp'), hpText: $('a-hp-text'), foes: $('a-foes'), score: $('a-score'),
+    feed: $('a-feed'), banner: $('a-banner'), bannerSub: $('a-banner-sub'), bannerTitle: $('a-banner-title'), bannerNote: $('a-banner-note'),
+    traps: $('a-traps'), threats: $('a-threats'), vignette: $('a-vignette'), over: $('a-over'), overStats: $('a-over-stats'),
+  }, {
+    hurt(power) {
+      cam.bump(power * 0.7);
+      link.send({ t: 'hit', power });
+    },
+    wrecked() {
+      stunts.cancel();
+      pushSettings();
+    },
   });
 
   // stunts: slow-motion cinematics with their own score
@@ -213,11 +237,16 @@ async function boot() {
     ui.hud.classList.remove('hidden');
     ui.brand.classList.add('hidden');
     cam.mode = view;
+    if (mode === 'action') {
+      resetCar(true);
+      action.begin();
+    }
     cam.snap(car.root);
     pushSettings();
   };
   const showMenu = () => {
     stunts.cancel();
+    if (action.running) action.end();
     playing = false;
     ui.title.classList.remove('hidden');
     ui.hud.classList.add('hidden');
@@ -254,6 +283,53 @@ async function boot() {
     prevPhones = n;
   };
 
+  // ------------------------------------------------------------ mode
+  // action mode clears the traffic off the perimeter road and sends in the pursuers
+  const applyMode = () => {
+    const act = mode === 'action';
+    document.body.classList.toggle('mode-action', act);
+    for (const b of life.trafficBodies) destruction.setSuspended(b, act);
+    life.setTraffic(!act);
+    for (const el of Array.from(ui.modes.children) as HTMLElement[]) {
+      const on = el.dataset.mode === mode;
+      el.classList.toggle('on', on);
+      el.setAttribute('aria-checked', String(on));
+    }
+    ui.qrMode.textContent = act ? 'action remote · with traps' : 'casual remote';
+  };
+  const setMode = (m: GameMode) => {
+    if (m === mode) return;
+    const wasPlaying = playing;
+    if (action.running) action.end();
+    mode = m;
+    storageSet('tnd-mode', m);
+    applyMode();
+    drawQR();
+    if (wasPlaying && m === 'action') {
+      resetCar(true);
+      action.begin();
+    }
+    toast(m === 'action' ? 'action mode · survive the waves' : 'casual mode', 1800);
+  };
+  applyMode();
+  for (const el of Array.from(ui.modes.children) as HTMLElement[]) {
+    el.addEventListener('click', () => {
+      setMode(el.dataset.mode === 'action' ? 'action' : 'casual');
+      pushSettings();
+    });
+  }
+  const restart = () => {
+    if (!action.over) return;
+    action.restart(lot.spawn);
+    cam.snap(car.root);
+    pushSettings();
+  };
+  ui.restart.addEventListener('click', restart);
+  const dropTrap = (k: (typeof TRAP_KINDS)[number]) => {
+    if (!playing || mode !== 'action') return;
+    if (!action.trap(k)) toast(`no ${k === 'emp' ? 'EMP' : k} ready`, 900);
+  };
+
   // ------------------------------------------------------------ settings (keyboard and phone)
   const setView = (v: Settings['cam']) => {
     view = v;
@@ -268,7 +344,7 @@ async function boot() {
     ui.hints.classList.toggle('hidden', !on);
   };
   const settingsMsg = (): SettingsMsg => ({
-    t: 'cfg', playing, backend, audio: audio.unlocked,
+    t: 'cfg', playing, backend, audio: audio.unlocked, mode,
     cam: view, assist: assistIdx, stunts: stunts.enabled, sound: !audio.isMuted, volume: +audio.masterVolume.toFixed(2),
     music: music.isEnabled, musicVolume: +music.musicVolume.toFixed(2), hints: hintsOn, quality, renderer: preferred,
   });
@@ -282,6 +358,8 @@ async function boot() {
       case 'menu': if (playing) showMenu(); break;
       case 'reset': resetCar(); break;
       case 'respawn': resetCar(true); break;
+      case 'restart': restart(); break;
+      case 'trap': if (TRAP_KINDS.includes(cmd.k)) dropTrap(cmd.k); break;
       case 'set': applySetting(cmd); break;
     }
     pushSettings();
@@ -293,6 +371,7 @@ async function boot() {
   const index = (v: unknown, n: number) => (typeof v === 'number' && Number.isInteger(v) && v >= 0 && v < n ? v : null);
   function applySetting({ k, v }: Extract<CommandMsg, { c: 'set' }>) {
     switch (k) {
+      case 'mode': if (GAME_MODES.includes(v)) setMode(v); break;
       case 'cam': if (CAM_VIEWS.includes(v)) setView(v); break;
       case 'assist': { const i = index(v, ASSIST_VALUES.length); if (i !== null) setAssist(i); break; }
       case 'stunts': if (typeof v === 'boolean') setStunts(v); break;
@@ -333,8 +412,13 @@ async function boot() {
   }
 
   addEventListener('keydown', (e) => {
+    const trap = /^Digit([1-5])$/.exec(e.code);
+    if (trap) {
+      dropTrap(TRAP_KINDS[Number(trap[1]) - 1]);
+      return;
+    }
     switch (e.code) {
-      case 'Enter': start(); break;
+      case 'Enter': if (action.over) restart(); else start(); break;
       case 'Escape': playing ? showMenu() : start(); break;
       case 'KeyC': if (playing) setView(CAM_VIEWS[(CAM_VIEWS.indexOf(view) + 1) % CAM_VIEWS.length]); break;
       case 'KeyR': resetCar(); break;
@@ -397,7 +481,7 @@ async function boot() {
   function tick(dt: number) {
     input = controls.read(dt);
     if (!playing && controls.source === 'phone' && link.state.active) start();
-    if (!playing) input = { steer: 0, throttle: 0, handbrake: true };
+    if (!playing || action.over) input = { steer: 0, throttle: 0, handbrake: true };
 
     // game time runs slower during a stunt; the camera and audio keep real time
     const gdt = dt * stunts.timeScale;
@@ -406,13 +490,16 @@ async function boot() {
     while (acc >= STEP && steps < 5) {
       car.drive(STEP, input);
       lot.breakables.preStep(car.body, car.sim.chassisColliders[0]);
+      action.preStep(STEP, lot.breakables);
       phys.step();
       car.capture();
-      stunts.postStep(STEP, playing);
+      action.postStep();
+      stunts.postStep(STEP, playing && !action.over);
       acc -= STEP;
       steps++;
       phys.events.drainContactForceEvents((ev) => {
         lot.breakables.onContactForce(ev);
+        if (action.onContact(ev, playerHandles)) return; // trading paint with a pursuer
         if (!playerHandles.has(ev.collider1()) && !playerHandles.has(ev.collider2())) return;
         const f = ev.totalForceMagnitude();
         const power = Math.min(1, (f - 9000) / 160000);
@@ -427,11 +514,12 @@ async function boot() {
 
     phys.sync();
     lot.breakables.update(gdt, cam.camera, car.position);
-    lot.hedges.update(gdt, hedgeMovers);
+    lot.hedges.update(gdt, action.running ? [...hedgeMovers, ...action.movers()] : hedgeMovers);
     car.render(acc / STEP, dt);
+    action.render(acc / STEP);
     lot.update(gdt, car.position);
     life.update(gdt, car.position);
-    weapons.update(gdt, controls.weapons, playing);
+    weapons.update(gdt, controls.weapons, playing && !action.over);
 
     // ---------------------------------------------------- tyres: skids & smoke
     const speed = Math.abs(car.sim.forwardSpeed());
@@ -471,7 +559,7 @@ async function boot() {
     }
 
     // ---------------------------------------------------- recovery
-    if (car.sim.upright() < 0.35 && !stunts.active) {
+    if (car.sim.upright() < 0.35 && !stunts.active && !action.over) {
       flippedFor += gdt;
       if (flippedFor > 2.2) {
         resetCar();
@@ -489,7 +577,10 @@ async function boot() {
     teleT += dt;
     if (teleT > 0.1) {
       teleT = 0;
-      link.send({ t: 'tele', kmh, gear, msl: weapons.missiles, heat: +weapons.heat.toFixed(2), hot: weapons.overheated, lock: !!weapons.lock });
+      link.send({
+        t: 'tele', kmh, gear, msl: weapons.missiles, heat: +weapons.heat.toFixed(2), hot: weapons.overheated, lock: !!weapons.lock,
+        ...(action.running ? action.telemetry() : {}),
+      });
     }
     // settings again once a second: the direct link may drop a packet, and new phones need them
     cfgT += dt;
@@ -506,6 +597,7 @@ async function boot() {
       cam.update(dt, car.root, speed);
     }
     destruction.update(gdt, cam.camera, car.position);
+    action.update(gdt, dt, cam.camera);
     fx.update(gdt);
     wreck.update(gdt);
     updateCombatHud();
@@ -545,7 +637,7 @@ async function boot() {
   requestAnimationFrame(frame);
 
   // debug handle for development
-  (window as unknown as { game: unknown }).game = { car, cam, phys, link, renderer, scene, start, weapons, destruction, controls, tick, music, stunts, lot };
+  (window as unknown as { game: unknown }).game = { car, cam, phys, link, renderer, scene, start, weapons, destruction, controls, tick, music, stunts, lot, action, setMode };
 }
 
 boot().catch((err) => {
