@@ -18,6 +18,9 @@ import { Weapons } from './combat/weapons';
 import { StuntDirector } from './stunts';
 import { useWebGLOutput } from './render/output';
 import { ActionMode } from './action/action';
+import { carDef } from './cars/roster';
+import { CAR_IDS, DEFAULT_CAR } from '../shared/cars';
+import { CarPicker } from './cars/picker';
 import {
   ASSIST_NAMES, CAM_VIEWS, GAME_MODES, QUALITY_LEVELS, TRAP_KINDS,
   type CommandMsg, type GameMode, type RendererChoice, type Settings, type SettingsMsg,
@@ -32,6 +35,7 @@ const ui = {
   lock: $('lock'), heat: $('heat-fill'), heatBox: $('heat'), pips: $('pips'),
   letterbox: $('letterbox'), card: $('stunt-card'), cardTitle: $('stunt-title'), cardTags: $('stunt-tags'),
   cardStats: $('stunt-stats'), cardPoints: $('stunt-points'), modes: $('modes'), qrMode: $('qr-mode'), restart: $('a-restart'),
+  garage: $('garage'),
 };
 
 let toastTimer = 0;
@@ -113,7 +117,11 @@ async function boot() {
 
   ui.loadingText.textContent = 'polishing the saloon…';
   await nextFrame();
-  const car = new PlayerCar(phys.world, scene, lot.spawn);
+  // the car: ?car= wins, then the last one driven on this browser
+  const urlCar = new URLSearchParams(location.search).get('car');
+  const storedCar = storageGet('tnd-car');
+  let carId = [urlCar, storedCar].find((c): c is string => !!c && CAR_IDS.includes(c)) ?? DEFAULT_CAR;
+  const car = new PlayerCar(phys.world, scene, lot.spawn, carDef(carId));
   const playerHandles = new Set(car.sim.chassisColliders.map((c) => c.handle));
   const cam = new ChaseCamera(phys);
   const skids = new SkidMarks(scene);
@@ -185,6 +193,7 @@ async function boot() {
     launch: () => audio.launch(),
     hit: (p) => action.onGunHit(p),
   });
+  car.onModel = () => weapons.fit();
 
   // action mode: waves of pursuers, armour, traps
   const action = new ActionMode(scene, phys, car, fx, destruction, wreck, audio, {
@@ -330,6 +339,21 @@ async function boot() {
     if (!action.trap(k)) toast(`no ${k === 'emp' ? 'EMP' : k} ready`, 900);
   };
 
+  // ------------------------------------------------------------ car
+  const picker = new CarPicker(ui.garage, carId, (id) => { setCar(id); pushSettings(); });
+  const setCar = (id: string) => {
+    if (id === carId || !CAR_IDS.includes(id)) return;
+    carId = id;
+    storageSet('tnd-car', id);
+    stunts.cancel();
+    car.setModel(carDef(id));
+    // same spot, new car: lift it a touch so the new wheels settle onto the floor
+    const p = car.body.translation();
+    car.reset(p.x, Math.max(0, p.y - 0.6), p.z, car.sim.yaw());
+    picker.show(id);
+    if (playing) toast(`${carDef(id).info.maker} ${carDef(id).info.model}`, 1600);
+  };
+
   // ------------------------------------------------------------ settings (keyboard and phone)
   const setView = (v: Settings['cam']) => {
     view = v;
@@ -344,7 +368,7 @@ async function boot() {
     ui.hints.classList.toggle('hidden', !on);
   };
   const settingsMsg = (): SettingsMsg => ({
-    t: 'cfg', playing, backend, audio: audio.unlocked, mode,
+    t: 'cfg', playing, backend, audio: audio.unlocked, mode, car: carId,
     cam: view, assist: assistIdx, stunts: stunts.enabled, sound: !audio.isMuted, volume: +audio.masterVolume.toFixed(2),
     music: music.isEnabled, musicVolume: +music.musicVolume.toFixed(2), hints: hintsOn, quality, renderer: preferred,
   });
@@ -372,6 +396,7 @@ async function boot() {
   function applySetting({ k, v }: Extract<CommandMsg, { c: 'set' }>) {
     switch (k) {
       case 'mode': if (GAME_MODES.includes(v)) setMode(v); break;
+      case 'car': if (typeof v === 'string') setCar(v); break;
       case 'cam': if (CAM_VIEWS.includes(v)) setView(v); break;
       case 'assist': { const i = index(v, ASSIST_VALUES.length); if (i !== null) setAssist(i); break; }
       case 'stunts': if (typeof v === 'boolean') setStunts(v); break;
@@ -637,7 +662,7 @@ async function boot() {
   requestAnimationFrame(frame);
 
   // debug handle for development
-  (window as unknown as { game: unknown }).game = { car, cam, phys, link, renderer, scene, start, weapons, destruction, controls, tick, music, stunts, lot, action, setMode };
+  (window as unknown as { game: unknown }).game = { car, cam, phys, link, renderer, scene, start, weapons, destruction, controls, tick, music, stunts, lot, action, setMode, setCar };
 }
 
 boot().catch((err) => {

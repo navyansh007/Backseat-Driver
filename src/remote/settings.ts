@@ -2,6 +2,7 @@ import {
   ASSIST_NAMES, CAM_VIEWS, GAME_MODES, QUALITY_LEVELS,
   type CommandMsg, type SettingKey, type Settings, type SettingsMsg,
 } from '../shared/protocol';
+import { CARS } from '../shared/cars';
 
 type Send = (cmd: DistributiveOmit<CommandMsg, 't' | 'id'>) => void;
 type DistributiveOmit<T, K extends keyof never> = T extends unknown ? Omit<T, K> : never;
@@ -23,6 +24,7 @@ const MODULES: { title: string; controls: Control[] }[] = [
     controls: [
       { kind: 'note', id: 'drive-state' },
       { kind: 'seg', key: 'mode', options: GAME_MODES.map((m) => ({ label: m, value: m })) },
+      { kind: 'seg', key: 'car', options: CARS.map((c) => ({ label: c.short, value: c.id })) },
       { kind: 'action', c: 'start', label: 'drive', id: 'act-play' },
       { kind: 'action', c: 'reset', label: 'reset car' },
       { kind: 'action', c: 'respawn', label: 'back to start' },

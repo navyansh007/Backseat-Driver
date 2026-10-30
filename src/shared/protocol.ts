@@ -71,6 +71,8 @@ export type RendererChoice = 'webgpu' | 'webgl';
 export interface Settings {
   /** casual drive, or action: waves of pursuers */
   mode: GameMode;
+  /** which car you drive: an id from CARS (shared/cars.ts) */
+  car: string;
   cam: CamView;
   /** index into ASSIST_NAMES */
   assist: number;

@@ -9,7 +9,8 @@ Inspired by the remote-controlled car chase in *Tomorrow Never Dies* (1997). All
 - **Phone remote.** A full-screen, retro, landscape remote with one round touchpad for driving, two fire buttons, quick **CAM** / **RESET** keys and a **SETUP** sheet that controls every game setting. Scan the QR code on the game screen to pair. The phone talks to the game directly over WebRTC, so input doesn't go through a server.
 - **Driving.** Raycast-vehicle physics (Rapier) with rear-wheel drive, suspension, speed-sensitive steering, skid marks, tyre smoke and a synthesized engine.
 - **Steering assist.** Counter-steer, spin control, traction control and obstacle avoidance. Press `V` to choose off, light, medium or strong.
-- **Weapons.** Twin bumper machine guns with heat build-up and a roof launcher with four homing missiles.
+- **Cars.** Choose on the title screen (or from the phone's **SETUP** sheet): the *BMV 750 iL*, a long executive saloon, or the *Ashton Martyn DB10*, a low, fast grand tourer with lofted, curved bodywork. Each car has its own handling, and they swap in place without reloading. To add a car, add an entry to `src/shared/cars.ts` and `src/game/cars/roster.ts`.
+- **Weapons.** Twin machine guns with heat build-up and a launcher with four homing missiles: in the bumper and roof of the saloon, rising out of the bonnet of the DB10.
 - **Destruction.** Cars, barrels, boxes, barriers, trolleys and glass break, explode and burn. Anything wrecked respawns once it is out of the camera's view.
 - **The world.** A spacious two-level car park with ramps and a roof jump, parked cars you can push, traffic, birds, clouds and a rental showroom.
 - **Two modes.** Pick on the title screen (or from the phone's **SETUP** sheet). *Casual* is the free drive. *Action* clears the traffic and sends waves of black saloons after you; the QR code opens the matching remote.

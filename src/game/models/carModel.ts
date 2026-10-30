@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { mergeGeometries, toCreasedNormals } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { blobShadowTexture, plateTexture } from '../world/textures';
+import { loftBody, type Loft, type LoftShape } from './loft';
 
 /**
  * Parametric procedural car generator. Every car is built from a side profile
@@ -10,7 +11,7 @@ import { blobShadowTexture, plateTexture } from '../world/textures';
  * Car space: +Z forward, +Y up, ground at y = 0, origin between the axles' midpoint projection.
  */
 
-export type RearStyle = 'notch' | 'hatch' | 'box';
+export type RearStyle = 'notch' | 'hatch' | 'box' | 'fastback';
 
 export interface CarSpec {
   name: string;
@@ -31,8 +32,28 @@ export interface CarSpec {
   rearAxleZ: number;
   track: number; // half distance between wheel centres
   rear: RearStyle;
-  grille: 'executive' | 'slim' | 'tall';
+  grille: 'executive' | 'slim' | 'tall' | 'vane';
   plate?: string;
+  // ---- optional shaping, for cars that aren't three-box saloons
+  /** chrome window surrounds (default: executive only) */
+  chromeTrim?: boolean;
+  /** wheel design (default: classic 5-spoke, 'multi' for the executive) */
+  wheels?: 'classic' | 'multi' | 'sport';
+  /** how far the glasshouse sits in from the body side, and how hard it leans in (default 0.13, 0.3) */
+  cabinInset?: number;
+  tumble?: number;
+  /** how much the nose and tail narrow in plan (default 0.11) */
+  taper?: number;
+  /** muscular haunches over the wheels, metres of extra half-width at the arches */
+  hips?: number;
+  /** where the B-pillar sits between roof front and rear, 0–1 (default 0.45, 0.28 for a box) */
+  pillar?: number;
+  doors?: 2 | 4;
+  bumpers?: 'saloon' | 'sport';
+  /** side strake on the front wings */
+  strake?: boolean;
+  /** smooth one-piece lofted bodywork instead of the extruded saloon body and cabin */
+  loft?: LoftShape;
 }
 
 export const SPECS: Record<string, CarSpec> = {
@@ -149,17 +170,27 @@ export function buildCar(spec: CarSpec, opts: { includeWheels: boolean; interior
   const { L, W, H, bottom, hoodH, beltH, trunkH } = spec;
   const hz = L / 2;
   const halfW = W / 2;
-  const cabinHalf = halfW - 0.13;
+  const hips = spec.hips ?? 0;
+  const cabinHalf = halfW - hips - (spec.cabinInset ?? 0.13);
+  const tumble = spec.tumble ?? 0.3;
+  const taper = spec.taper ?? 0.11;
 
   // Plan-view rounding of the nose and tail.
   const plan = (z: number) => {
     const u = Math.abs(z) / hz;
     const f = Math.max(0, (u - 0.78) / 0.22);
-    return 1 - 0.11 * f * f;
+    return 1 - taper * f * f;
   };
-  const bodyHW = (y: number, z: number) =>
-    (halfW - Math.max(0, y - (beltH - 0.28)) * 0.16 - Math.max(0, bottom + 0.15 - y) * 0.25) * plan(z);
-  const cabinHW = (y: number, z: number) => (cabinHalf - Math.max(0, y - beltH) * 0.3) * plan(z);
+  // haunches: the body swells over each axle (more over the rear) and pulls in at the doors
+  const haunch = (y: number, z: number) => {
+    if (!hips) return 0;
+    const along = Math.exp(-(((z - spec.rearAxleZ) / 0.75) ** 2)) + 0.7 * Math.exp(-(((z - spec.frontAxleZ) / 0.65) ** 2));
+    const up = Math.max(0, 1 - Math.abs(y - (beltH - 0.22)) / 0.42);
+    return hips * Math.min(1, along) * up;
+  };
+  let bodyHW = (y: number, z: number) =>
+    (halfW - hips + haunch(y, z) - Math.max(0, y - (beltH - 0.28)) * 0.16 - Math.max(0, bottom + 0.15 - y) * 0.25) * plan(z);
+  const cabinHW = (y: number, z: number) => (cabinHalf - Math.max(0, y - beltH) * tumble) * plan(z);
 
   // ------------------------------------------------------------------ body
   const cowlH = beltH - 0.03;
@@ -182,6 +213,15 @@ export function buildCar(spec: CarSpec, opts: { includeWheels: boolean; interior
       [-hz, trunkH - 0.18],
       [-hz - 0.01, bottom + 0.22],
       [-hz + 0.06, bottom],
+    );
+  } else if (spec.rear === 'fastback') {
+    // the rear glass runs almost to the tail, which kicks up into a small ducktail
+    top.push(
+      [-hz + 0.2, trunkH + 0.01],
+      [-hz + 0.03, trunkH + 0.035],
+      [-hz - 0.005, trunkH - 0.09],
+      [-hz - 0.01, bottom + 0.24],
+      [-hz + 0.07, bottom],
     );
   } else {
     top.push(
@@ -216,6 +256,7 @@ export function buildCar(spec: CarSpec, opts: { includeWheels: boolean; interior
   shape.closePath();
 
   const bevel = 0.05;
+  if (!spec.loft) {
   const bodyGeo = new THREE.ExtrudeGeometry(shape, {
     depth: W - bevel * 2,
     bevelEnabled: true,
@@ -230,12 +271,14 @@ export function buildCar(spec: CarSpec, opts: { includeWheels: boolean; interior
   bodyGeo.translate((W - bevel * 2) / 2, 0, 0);
   sculpt(bodyGeo, (x, y, z) => (x / halfW) * bodyHW(y, z));
   bag.add('paint', toCreasedNormals(bodyGeo, 0.6));
+  }
 
   // ----------------------------------------------------------------- cabin
   const wsA: [number, number] = [spec.wsBaseZ - 0.04, beltH];
   const wsB: [number, number] = [spec.roofFrontZ, H - 0.02];
   const rwA: [number, number] = [spec.roofRearZ, H - 0.03];
   const rwB: [number, number] = [spec.rwBaseZ, beltH];
+  if (!spec.loft) {
   const cab = new THREE.Shape();
   cab.moveTo(spec.wsBaseZ, beltH - 0.07);
   cab.lineTo(wsA[0], wsA[1]);
@@ -262,11 +305,12 @@ export function buildCar(spec: CarSpec, opts: { includeWheels: boolean; interior
   const [cabPaint, cabGlass] = splitByNormal(cabGeo, (n) => n.y > 0.72 || Math.abs(n.x) > 0.62);
   bag.add('paint', toCreasedNormals(cabPaint, 0.5));
   bag.add('glass', toCreasedNormals(cabGlass, 0.5));
+  }
 
   // side windows wrapped onto the cabin surface
   const yb = beltH + 0.035;
   const yt = H - 0.085;
-  const zB = spec.roofFrontZ + (spec.roofRearZ - spec.roofFrontZ) * (spec.rear === 'box' ? 0.28 : 0.45);
+  const zB = spec.roofFrontZ + (spec.roofRearZ - spec.roofFrontZ) * (spec.pillar ?? (spec.rear === 'box' ? 0.28 : 0.45));
   const frontWin: [number, number][] = [
     [lineZ(wsA, wsB, yb) - 0.1, yb],
     [lineZ(wsA, wsB, yt) - 0.09, yt],
@@ -277,7 +321,7 @@ export function buildCar(spec: CarSpec, opts: { includeWheels: boolean; interior
     [zB - 0.045, yb],
     [zB - 0.045, yt],
     [lineZ(rwA, rwB, yt) + 0.09, yt],
-    [lineZ(rwA, rwB, yb) + (spec.rear === 'notch' ? 0.22 : 0.1), yb + (spec.rear === 'notch' ? 0.02 : 0)],
+    [lineZ(rwA, rwB, yb) + (spec.rear === 'notch' ? 0.22 : spec.rear === 'fastback' ? 0.35 : 0.1), yb + (spec.rear === 'notch' ? 0.02 : 0)],
   ];
   const pillar: [number, number][] = [
     [zB + 0.045, yb],
@@ -291,12 +335,48 @@ export function buildCar(spec: CarSpec, opts: { includeWheels: boolean; interior
     [rearWin[2][0] - 0.03, yt + 0.025],
     [rearWin[3][0] - 0.03, rearWin[3][1] - 0.025],
   ];
-  for (const side of [-1, 1]) {
-    bag.add(spec.name === 'executive' ? 'chrome' : 'trim', wrapPanel(surround, side, (y, z) => cabinHW(y, z) + 0.003));
+  for (const side of spec.loft ? [] : [-1, 1]) {
+    bag.add(spec.chromeTrim ?? spec.name === 'executive' ? 'chrome' : 'trim', wrapPanel(surround, side, (y, z) => cabinHW(y, z) + 0.003));
     bag.add('sideGlass', wrapPanel(frontWin, side, (y, z) => cabinHW(y, z) + 0.006));
     bag.add('sideGlass', wrapPanel(rearWin, side, (y, z) => cabinHW(y, z) + 0.006));
     bag.add('trim', wrapPanel(pillar, side, (y, z) => cabinHW(y, z) + 0.007));
   }
+
+  // a lofted sports car: one smooth shell with its glass and window line already in it
+  let loft: Loft | null = null;
+  if (spec.loft) {
+    loft = loftBody(L, spec.loft);
+    bag.add('paint', loft.paint);
+    bag.add('glass', loft.glass);
+    bag.add('sideGlass', loft.sideGlass);
+    bag.add('chrome', loft.chrome);
+    bodyHW = loft.halfW;
+  }
+  // where the nose and tail surfaces are, for lamps and grilles
+  const noseZ = (x: number, y: number) => (loft ? loft.frontZ(x, y) : hz);
+  const tailZ = (x: number, y: number) => (loft ? loft.rearZ(x, y) : -hz);
+  /** The same on the tail: the part is built facing forward and turned round to face back. */
+  const onTail = (g: THREE.BufferGeometry, cx: number, cy: number, out: number) => {
+    const geo = (g.index ? g.toNonIndexed() : g).rotateY(Math.PI);
+    const pos = geo.attributes.position as THREE.BufferAttribute;
+    for (let i = 0; i < pos.count; i++) {
+      const x = cx + pos.getX(i), y = cy + pos.getY(i);
+      pos.setXYZ(i, x, y, tailZ(Math.abs(x), y) + pos.getZ(i) - out);
+    }
+    geo.computeVertexNormals();
+    return geo;
+  };
+  /** Lay a part built round the origin (x, y across the face, z = depth) onto the curved nose at (cx, cy). */
+  const onNose = (g: THREE.BufferGeometry, cx: number, cy: number, out: number) => {
+    const geo = g.index ? g.toNonIndexed() : g;
+    const pos = geo.attributes.position as THREE.BufferAttribute;
+    for (let i = 0; i < pos.count; i++) {
+      const x = cx + pos.getX(i), y = cy + pos.getY(i);
+      pos.setXYZ(i, x, y, noseZ(Math.abs(x), y) + pos.getZ(i) + out);
+    }
+    geo.computeVertexNormals();
+    return geo;
+  };
 
   // ---------------------------------------------------------------- details
   const front = hz;
@@ -317,6 +397,42 @@ export function buildCar(spec: CarSpec, opts: { includeWheels: boolean; interior
       // fog lamps in the bumper
       bag.add('head', new THREE.CylinderGeometry(0.04, 0.04, 0.03, 16), at(s * 0.6, bottom + 0.2, front + 0.0, Math.PI / 2));
     }
+  } else if (spec.grille === 'vane') {
+    // a wide, low grille whose top edge dips in the middle, filled with fine horizontal vanes, and
+    // slim headlamps along the top corners; every piece is bent round the curve of the nose
+    const gy = bottom + 0.26;
+    const gs = new THREE.Shape();
+    gs.moveTo(-0.42, -0.11);
+    gs.lineTo(0.42, -0.11);
+    gs.quadraticCurveTo(0.52, -0.09, 0.49, 0.02);
+    gs.quadraticCurveTo(0.42, 0.115, 0.2, 0.105);
+    gs.quadraticCurveTo(0, 0.085, -0.2, 0.105);
+    gs.quadraticCurveTo(-0.42, 0.115, -0.49, 0.02);
+    gs.quadraticCurveTo(-0.52, -0.09, -0.42, -0.11);
+    const grilleGeo = new THREE.ShapeGeometry(gs, 10);
+    bag.add('trim', onNose(grilleGeo, 0, gy, 0.004));
+    const rimGeo = new THREE.ExtrudeGeometry(gs, { depth: 0.012, bevelEnabled: true, bevelThickness: 0.008, bevelSize: 0.012, bevelSegments: 2, curveSegments: 10 });
+    bag.add('chrome', onNose(rimGeo, 0, gy, -0.012));
+    bag.add('trim', onNose(new THREE.ExtrudeGeometry(gs, { depth: 0.02, bevelEnabled: false, curveSegments: 10 }), 0, gy, -0.006));
+    for (let i = 0; i < 7; i++) {
+      const vy = -0.08 + i * 0.027;
+      const half = 0.44 - Math.abs(vy) * 0.5 - (vy > 0.04 ? (vy - 0.04) * 2.4 : 0);
+      bag.add('chrome', onNose(new THREE.BoxGeometry(half * 2, 0.007, 0.012, 16, 1, 1), 0, gy + vy, 0.01));
+    }
+    const ly = hoodH - 0.1;
+    for (const s of [-1, 1]) {
+      // lamp: a slim blade, kinked up at its outer end
+      const lamp = new THREE.Shape();
+      lamp.moveTo(-0.2, -0.02);
+      lamp.quadraticCurveTo(0.08, -0.035, 0.2, 0.012);
+      lamp.lineTo(0.19, 0.035);
+      lamp.quadraticCurveTo(0.02, 0.02, -0.2, 0.02);
+      lamp.closePath();
+      const flip = (g: THREE.BufferGeometry) => (s < 0 ? flipIfNeeded(g, new THREE.Matrix4().makeScale(-1, 1, 1), -1) : g);
+      const housing = flip(new THREE.ExtrudeGeometry(lamp, { depth: 0.02, bevelEnabled: true, bevelThickness: 0.006, bevelSize: 0.012, bevelSegments: 2, curveSegments: 8 }));
+      bag.add('trim', onNose(housing, s * 0.6, ly, -0.012));
+      bag.add('head', onNose(flip(new THREE.ShapeGeometry(lamp, 8)), s * 0.6, ly, 0.024));
+    }
   } else {
     const gw = spec.grille === 'tall' ? 0.7 : 0.6;
     const gh = spec.grille === 'tall' ? 0.2 : 0.09;
@@ -328,10 +444,20 @@ export function buildCar(spec: CarSpec, opts: { includeWheels: boolean; interior
     }
   }
   // bumpers
-  bag.add('trim', box(W * 0.9, 0.12, 0.12), at(0, bottom + 0.13, front - 0.035));
-  bag.add('trim', box(W * 0.9, 0.12, 0.12), at(0, bottom + 0.13, -hz + 0.035));
+  if (spec.bumpers === 'sport') {
+    // a splitter under the nose and a finned diffuser under the tail instead of bumpers
+    const sz = loft ? noseZ(0, bottom + 0.12) - 0.13 : front - 0.12;
+    const dz = loft ? tailZ(0, bottom + 0.2) + 0.16 : -hz + 0.14;
+    const dy = loft ? bottom + 0.09 : bottom + 0.04;
+    bag.add('trim', box(loft ? 0.95 : W * 0.84, 0.025, 0.22), at(0, loft ? bottom + 0.07 : bottom + 0.02, loft ? sz - 0.04 : sz));
+    bag.add('trim', box(loft ? 1.1 : W * 0.8, 0.07, 0.3), at(0, dy, dz, 0.25));
+    for (const x of [-0.3, -0.1, 0.1, 0.3]) bag.add('trim', box(0.015, 0.1, 0.28), at(x * (loft ? 1.4 : W), dy + 0.01, dz + 0.02, 0.25));
+  } else {
+    bag.add('trim', box(W * 0.9, 0.12, 0.12), at(0, bottom + 0.13, front - 0.035));
+    bag.add('trim', box(W * 0.9, 0.12, 0.12), at(0, bottom + 0.13, -hz + 0.035));
+  }
   // underbody
-  bag.add('under', box(W - 0.2, 0.1, L - 0.4), at(0, bottom + 0.06, 0));
+  bag.add('under', box(loft ? W * 0.72 : W - 0.2, 0.1, L - 0.4), at(0, bottom + 0.06, 0));
 
   // tail lamps
   if (spec.rear === 'notch') {
@@ -341,6 +467,22 @@ export function buildCar(spec: CarSpec, opts: { includeWheels: boolean; interior
       bag.add('amber', box(W * 0.07, 0.12, 0.05), at(s * W * 0.135, ty, -hz + 0.003));
     }
     bag.add('chrome', box(W * 0.12, 0.02, 0.04), at(0, ty + 0.05, -hz + 0.005));
+  } else if (spec.rear === 'fastback') {
+    // one slim blade each side, bent round the tail under the ducktail lip
+    const ty = trunkH - 0.11;
+    const blade = new THREE.Shape();
+    blade.moveTo(0.27, -0.016);
+    blade.quadraticCurveTo(-0.1, -0.03, -0.27, 0.0);
+    blade.lineTo(-0.26, 0.022);
+    blade.quadraticCurveTo(-0.05, 0.02, 0.27, 0.016);
+    blade.closePath();
+    const housing = new THREE.ExtrudeGeometry(blade, { depth: 0.01, bevelEnabled: true, bevelThickness: 0.005, bevelSize: 0.01, bevelSegments: 1 });
+    // built with the kicked-up end on the left; turning it round to face back puts that end outboard on the right
+    const mirror = (g: THREE.BufferGeometry, s: number) => (s < 0 ? flipIfNeeded(g, new THREE.Matrix4().makeScale(-1, 1, 1), -1) : g.clone());
+    for (const s of [-1, 1]) {
+      bag.add('trim', onTail(mirror(housing, s), s * 0.4, ty, -0.012));
+      bag.add('tail', onTail(mirror(new THREE.ShapeGeometry(blade, 8), s), s * 0.4, ty, 0.012));
+    }
   } else {
     for (const s of [-1, 1]) {
       bag.add('tail', box(0.12, 0.38, 0.05), at(s * (halfW * plan(-hz) - 0.1), beltH - 0.12, -hz - 0.0));
@@ -348,33 +490,55 @@ export function buildCar(spec: CarSpec, opts: { includeWheels: boolean; interior
   }
   // plates
   const plateGeo = box(0.52, 0.12, 0.012);
-  bag.add('plate', plateGeo, at(0, bottom + 0.27, front + 0.015));
-  bag.add('plate', plateGeo, at(0, (spec.rear === 'notch' ? trunkH - 0.34 : beltH - 0.4), -hz - 0.012, 0, Math.PI));
+  if (spec.grille !== 'vane') bag.add('plate', plateGeo, at(0, bottom + 0.27, front + 0.015)); // no front plate over that grille
+  bag.add('plate', plateGeo, at(0, spec.rear === 'notch' ? trunkH - 0.34 : spec.rear === 'fastback' ? bottom + 0.33 : beltH - 0.4, tailZ(0.26, bottom + 0.33) - 0.012, 0, Math.PI));
 
   // mirrors
   for (const s of [-1, 1]) {
+    if (loft) {
+      // a small mirror on a slim stalk at the front of the side window
+      const mz = spec.wsBaseZ - 0.32;
+      const my = beltH + 0.04;
+      bag.add('paint', roundedBox(0.17, 0.085, 0.07, 0.035), at(s * 0.93, my, mz, 0, s * 0.2));
+      bag.add('trim', box(0.2, 0.02, 0.03), at(s * 0.83, my - 0.05, mz + 0.01, 0, 0, s * 0.32));
+    } else {
     const mx = s * (bodyHW(beltH, spec.wsBaseZ) + 0.08);
     bag.add('paint', roundedBox(0.16, 0.1, 0.07, 0.03), at(mx, beltH + 0.08, spec.wsBaseZ - 0.12, 0, s * 0.15));
     bag.add('trim', box(0.12, 0.04, 0.04), at(mx - s * 0.06, beltH + 0.04, spec.wsBaseZ - 0.1));
+    }
     // door handles + rub strip
-    for (const hzD of [zB + 0.45, zB - 0.6]) {
+    for (const hzD of spec.doors === 2 ? [zB + 0.05] : [zB + 0.45, zB - 0.6]) {
       bag.add('chrome', box(0.02, 0.025, 0.16), at(s * (bodyHW(beltH - 0.12, hzD) + 0.008), beltH - 0.12, hzD));
     }
     const ry = bottom + 0.3;
+    if (!loft) {
     const len = spec.frontAxleZ - spec.rearAxleZ - 0.95;
     const midZ = (spec.frontAxleZ + spec.rearAxleZ) / 2;
     bag.add('trim', box(0.02, 0.05, len), at(s * (bodyHW(ry, midZ) + 0.005), ry, midZ));
     bag.add('chrome', box(0.01, 0.008, len), at(s * (bodyHW(ry, midZ) + 0.016), ry + 0.012, midZ));
+    }
+    if (spec.strake) {
+      // a slim chrome strake in the wing behind the front wheel
+      const sz = spec.frontAxleZ - 0.62;
+      bag.add('trim', box(0.012, 0.035, 0.3), at(s * (bodyHW(beltH - 0.2, sz) + 0.004), beltH - 0.2, sz, 0, 0, s * 0.05));
+      bag.add('chrome', box(0.012, 0.012, 0.32), at(s * (bodyHW(beltH - 0.18, sz) + 0.009), beltH - 0.18, sz));
+    }
     // belt-line chrome
-    bag.add('chrome', box(0.012, 0.012, spec.wsBaseZ - spec.rwBaseZ - 0.2), at(s * (bodyHW(beltH, 0) - 0.005), beltH - 0.005, (spec.wsBaseZ + spec.rwBaseZ) / 2));
+    if (spec.bumpers !== 'sport') bag.add('chrome', box(0.012, 0.012, spec.wsBaseZ - spec.rwBaseZ - 0.2), at(s * (bodyHW(beltH, 0) - 0.005), beltH - 0.005, (spec.wsBaseZ + spec.rwBaseZ) / 2));
   }
-  // exhaust
-  bag.add('chrome', new THREE.CylinderGeometry(0.035, 0.035, 0.12, 12), at(-W * 0.3, bottom + 0.05, -hz + 0.02, Math.PI / 2));
+  // exhaust: one pipe on a saloon, a pair either side of the diffuser on a sports car
+  const pipes = spec.bumpers === 'sport' ? [-W * 0.34, -W * 0.27, W * 0.27, W * 0.34] : [-W * 0.3];
+  for (const x of pipes) {
+    const py = loft ? bottom + 0.08 : bottom + 0.05;
+    bag.add('chrome', new THREE.CylinderGeometry(0.035, 0.035, 0.12, 12), at(x, py, loft ? tailZ(Math.abs(x), py + 0.04) + 0.03 : -hz + 0.02, Math.PI / 2));
+  }
 
   // panel gaps: thin dark seams wrapped onto the doors
   const seamTop = beltH - 0.035;
   const seamBottom = bottom + 0.2;
-  const doorCuts = [lineZ(wsA, wsB, beltH) - 0.04, zB, spec.rear === 'notch' ? spec.rwBaseZ + 0.12 : spec.rearAxleZ + 0.52];
+  const doorCuts = spec.doors === 2
+    ? [lineZ(wsA, wsB, beltH) - 0.04, zB - 0.12]
+    : [lineZ(wsA, wsB, beltH) - 0.04, zB, spec.rear === 'notch' ? spec.rwBaseZ + 0.12 : spec.rearAxleZ + 0.52];
   for (const side of [-1, 1]) {
     for (const cz of doorCuts) {
       const seam: [number, number][] = [[cz + 0.004, seamBottom], [cz + 0.004, seamTop], [cz - 0.004, seamTop], [cz - 0.004, seamBottom]];
@@ -386,6 +550,15 @@ export function buildCar(spec: CarSpec, opts: { includeWheels: boolean; interior
 
   // dark wheel-arch liners so you can't see through the arches
   for (const az of [spec.frontAxleZ, spec.rearAxleZ]) {
+    if (loft) {
+      // under a low bonnet a full-width liner would show through: one short liner per wheel
+      for (const s of [-1, 1]) {
+        const liner = new THREE.CylinderGeometry(spec.wheelR + 0.04, spec.wheelR + 0.04, spec.wheelW + 0.12, 20, 1, true, 0, Math.PI);
+        liner.rotateZ(Math.PI / 2);
+        bag.add('under', liner, at(s * spec.track, spec.wheelR, az));
+      }
+      continue;
+    }
     const liner = new THREE.CylinderGeometry(spec.wheelR + 0.055, spec.wheelR + 0.055, W - 0.22, 20, 1, true, 0, Math.PI);
     liner.rotateZ(Math.PI / 2);
     bag.add('under', liner, at(0, spec.wheelR, az));
@@ -398,28 +571,34 @@ export function buildCar(spec: CarSpec, opts: { includeWheels: boolean; interior
 
   // cabin interior (only for the hero car, whose glass is see-through)
   if (opts.interior) {
-    const seatY = bottom + 0.42;
-    const dashZ = spec.wsBaseZ - 0.3;
-    bag.add('interior', box(W - 0.34, 0.2, 0.45), at(0, beltH - 0.06, dashZ));
-    bag.add('interior', box(W - 0.4, 0.08, 0.5), at(0, beltH + 0.04, dashZ - 0.05, -0.15));
+    // a sports car's cabin is narrower and lower: seats sit nearly on the floor, under the roof
+    const iw = loft ? 1.05 : W - 0.34;
+    const seatY = loft ? H - 0.97 : bottom + 0.42 + Math.min(0, H - bottom - 1.22);
+    const seatX = loft ? 0.32 : 0.38;
+    const dashY = loft ? beltH - 0.13 : beltH - 0.06;
+    const dashZ = spec.wsBaseZ - (loft ? 0.42 : 0.3);
+    bag.add('interior', box(iw, 0.2, 0.45), at(0, dashY, dashZ));
+    bag.add('interior', box(iw - 0.06, 0.08, 0.5), at(0, dashY + 0.1, dashZ - 0.05, -0.15));
     const wheelGeo = new THREE.TorusGeometry(0.17, 0.022, 8, 24);
-    bag.add('trim', wheelGeo, at(0.38, beltH + 0.07, dashZ - 0.38, -0.45));
-    bag.add('trim', new THREE.CylinderGeometry(0.03, 0.03, 0.3, 8), at(0.38, beltH + 0.0, dashZ - 0.22, Math.PI / 2 - 0.45));
+    bag.add('trim', wheelGeo, at(seatX, dashY + 0.13, dashZ - 0.38, -0.45));
+    bag.add('trim', new THREE.CylinderGeometry(0.03, 0.03, 0.3, 8), at(seatX, dashY + 0.06, dashZ - 0.22, Math.PI / 2 - 0.45));
     const frontSeatZ = zB + 0.15;
     const rearSeatZ = (zB + spec.roofRearZ) / 2 - 0.15;
-    for (const sx of [-0.38, 0.38]) {
+    for (const sx of [-seatX, seatX]) {
       bag.add('interior', box(0.5, 0.14, 0.5), at(sx, seatY, frontSeatZ));
       bag.add('interior', roundedBox(0.48, 0.62, 0.13, 0.06), at(sx, seatY + 0.38, frontSeatZ - 0.27, -0.2));
       bag.add('interior', box(0.26, 0.16, 0.1), at(sx, seatY + 0.76, frontSeatZ - 0.33, -0.2));
     }
-    bag.add('interior', box(W - 0.42, 0.14, 0.5), at(0, seatY, rearSeatZ));
-    bag.add('interior', box(W - 0.42, 0.55, 0.14), at(0, seatY + 0.34, rearSeatZ - 0.3, -0.25));
-    bag.add('interior', box(W - 0.4, 0.04, 0.4), at(0, beltH - 0.02, spec.rwBaseZ + 0.25));
-    bag.add('interior', box(W - 0.3, 0.04, spec.wsBaseZ - spec.rwBaseZ), at(0, bottom + 0.3, (spec.wsBaseZ + spec.rwBaseZ) / 2));
+    if (spec.doors !== 2) {
+      bag.add('interior', box(W - 0.42, 0.14, 0.5), at(0, seatY, rearSeatZ));
+      bag.add('interior', box(W - 0.42, 0.55, 0.14), at(0, seatY + 0.34, rearSeatZ - 0.3, -0.25));
+    }
+    bag.add('interior', box(loft ? iw : W - 0.4, 0.04, 0.4), at(0, beltH - 0.02, spec.rwBaseZ + 0.25));
+    bag.add('interior', box(loft ? iw : W - 0.3, 0.04, spec.wsBaseZ - spec.rwBaseZ), at(0, loft ? seatY - 0.09 : bottom + 0.3, (spec.wsBaseZ + spec.rwBaseZ) / 2));
   }
 
   // ----------------------------------------------------------------- wheels
-  const wheel = buildWheel(spec.wheelR, spec.wheelW, spec.name === 'executive');
+  const wheel = buildWheel(spec.wheelR, spec.wheelW, spec.wheels ?? (spec.name === 'executive' ? 'multi' : 'classic'));
   const wheelPositions = [
     new THREE.Vector3(spec.track, spec.wheelR, spec.frontAxleZ),
     new THREE.Vector3(-spec.track, spec.wheelR, spec.frontAxleZ),
@@ -523,8 +702,10 @@ function wrapPanel(poly: [number, number][], side: number, xAt: (y: number, z: n
 }
 
 /** Wheel: lathe-turned tyre, dished rim with spokes. Axle along X, outer face at +X. */
-function buildWheel(r: number, w: number, multiSpoke: boolean) {
-  const rimR = r * 0.66;
+function buildWheel(r: number, w: number, style: 'classic' | 'multi' | 'sport') {
+  const multiSpoke = style === 'multi';
+  // big rims on thin sidewalls for the sports wheel
+  const rimR = r * (style === 'sport' ? 0.76 : 0.66);
   const pts = [
     new THREE.Vector2(rimR * 0.98, -w / 2),
     new THREE.Vector2(r - 0.045, -w / 2),
@@ -548,7 +729,20 @@ function buildWheel(r: number, w: number, multiSpoke: boolean) {
   hub.rotateZ(Math.PI / 2);
   hub.translate(w / 2 - 0.02, 0, 0);
   chromeParts.push(hub.toNonIndexed());
-  const spokes = multiSpoke ? 10 : 5;
+  const spokes = style === 'sport' ? 0 : multiSpoke ? 10 : 5;
+  if (style === 'sport') {
+    // ten thin split spokes in pairs, each swept slightly so the wheel looks like it's turning
+    for (let i = 0; i < 5; i++) {
+      for (const k of [-1, 1]) {
+        const a = (i / 5) * Math.PI * 2 + k * 0.13;
+        const sp = new THREE.BoxGeometry(0.02, rimR * 0.86, 0.022);
+        sp.translate(0, rimR * 0.5, 0);
+        sp.rotateX(a);
+        sp.translate(w / 2 - 0.03, 0, 0);
+        chromeParts.push(sp.toNonIndexed());
+      }
+    }
+  }
   for (let i = 0; i < spokes; i++) {
     const a = (i / spokes) * Math.PI * 2;
     const sp = new THREE.BoxGeometry(0.025, rimR * 0.82, multiSpoke ? 0.028 : 0.05);
@@ -603,6 +797,8 @@ export interface CarMaterials {
   interior: THREE.MeshStandardMaterial;
   ao: THREE.MeshBasicMaterial;
   chrome: THREE.MeshStandardMaterial;
+  /** the player car's wheel rims (chrome, or a darker finish) */
+  rim: THREE.MeshStandardMaterial;
   trim: THREE.MeshStandardMaterial;
   rubber: THREE.MeshStandardMaterial;
   head: THREE.MeshStandardMaterial;
@@ -612,7 +808,10 @@ export interface CarMaterials {
   under: THREE.MeshStandardMaterial;
 }
 
-export function makeCarMaterials(paintColor: THREE.ColorRepresentation, plateText = 'PK·2048', opts: { seeThrough?: boolean } = {}): CarMaterials {
+export function makeCarMaterials(
+  paintColor: THREE.ColorRepresentation, plateText = 'PK·2048', opts: { seeThrough?: boolean; rim?: THREE.ColorRepresentation } = {},
+): CarMaterials {
+  const chrome = new THREE.MeshStandardMaterial({ color: 0xe6e9ee, metalness: 1, roughness: 0.16 });
   const sideGlass = new THREE.MeshPhysicalMaterial({ color: 0x0e1418, metalness: 0.1, roughness: 0.04, clearcoat: 1, envMapIntensity: 1.6 });
   return {
     paint: new THREE.MeshPhysicalMaterial({
@@ -627,7 +826,8 @@ export function makeCarMaterials(paintColor: THREE.ColorRepresentation, plateTex
     caliper: new THREE.MeshStandardMaterial({ color: 0xb3261e, metalness: 0.3, roughness: 0.45 }),
     interior: new THREE.MeshStandardMaterial({ color: 0x3a342e, roughness: 0.85 }),
     ao: new THREE.MeshBasicMaterial({ map: blobShadowTexture(), transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3 }),
-    chrome: new THREE.MeshStandardMaterial({ color: 0xe6e9ee, metalness: 1, roughness: 0.16 }),
+    chrome,
+    rim: opts.rim === undefined ? chrome : new THREE.MeshStandardMaterial({ color: opts.rim, metalness: 0.9, roughness: 0.3 }),
     trim: new THREE.MeshStandardMaterial({ color: 0x17191c, metalness: 0.2, roughness: 0.55 }),
     rubber: new THREE.MeshStandardMaterial({ color: 0x141414, metalness: 0, roughness: 0.92 }),
     head: new THREE.MeshStandardMaterial({ color: 0xf2f4f8, emissive: 0xfff3dc, emissiveIntensity: 0.4, metalness: 0.4, roughness: 0.1 }),
@@ -660,7 +860,7 @@ export function wheelMesh(parts: CarParts, mats: CarMaterials, side: 1 | -1) {
   const spin = new THREE.Group();
   for (const [geo, mat] of [
     [parts.wheel.rubber, mats.rubber],
-    [parts.wheel.chrome, mats.chrome],
+    [parts.wheel.chrome, mats.rim],
     [parts.wheel.trim, mats.trim],
     [parts.wheel.disc, mats.disc],
   ] as const) {

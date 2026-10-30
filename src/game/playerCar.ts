@@ -1,8 +1,9 @@
 import * as THREE from 'three';
 import type RAPIER from '@dimforge/rapier3d-compat';
 import { VehicleSim, TUNING, type DriveInput } from './vehiclePhysics';
-import { buildCar, carMeshes, makeCarMaterials, wheelMesh, SPECS, type CarMaterials } from './models/carModel';
+import { buildCar, carMeshes, makeCarMaterials, wheelMesh, type CarMaterials } from './models/carModel';
 import { G, groups } from './physics';
+import type { CarDef } from './cars/roster';
 
 export const PLAYER_GROUPS = groups(G.PLAYER, 0xffff);
 
@@ -10,46 +11,91 @@ export const PLAYER_GROUPS = groups(G.PLAYER, 0xffff);
 export class PlayerCar {
   readonly sim: VehicleSim;
   readonly root = new THREE.Group();
-  readonly mats: CarMaterials;
+  mats!: CarMaterials;
+  def!: CarDef;
   readonly wheels: THREE.Group[] = [];
+  /** the bodywork and wheels of the current model (lamps and weapons stay on the root) */
+  private model = new THREE.Group();
+  private lamps: THREE.SpotLight[] = [];
+  /** called after the model changes, so things mounted on the car can move */
+  onModel = () => {};
   private prevPos = new THREE.Vector3();
   private currPos = new THREE.Vector3();
   private prevRot = new THREE.Quaternion();
   private currRot = new THREE.Quaternion();
   private brakeGlow = 0;
 
-  constructor(world: RAPIER.World, scene: THREE.Scene, spawn: { x: number; y: number; z: number; yaw: number }) {
-    const spec = SPECS.executive;
-    const parts = buildCar(spec, { includeWheels: false, interior: true });
-    this.mats = makeCarMaterials(0x5b636c, spec.plate, { seeThrough: true });
-    const body = carMeshes(parts, this.mats);
-    body.position.y = -TUNING.rideHeight;
-    this.root.add(body);
-
+  constructor(world: RAPIER.World, scene: THREE.Scene, spawn: { x: number; y: number; z: number; yaw: number }, def: CarDef) {
+    const spec = def.spec;
     this.sim = new VehicleSim(
       world,
       { frontAxleZ: spec.frontAxleZ, rearAxleZ: spec.rearAxleZ, track: spec.track, radius: spec.wheelR },
       spawn,
       PLAYER_GROUPS,
     );
+    this.root.add(this.model);
+
+    // headlamp beams for the darker garage interior (kept for good: lights must never leave the scene)
+    for (let i = 0; i < 2; i++) {
+      const spot = new THREE.SpotLight(0xfff1d6, 18, 32, 0.42, 0.6, 1.6);
+      this.lamps.push(spot);
+      this.root.add(spot, spot.target);
+    }
+
+    this.setModel(def);
+    scene.add(this.root);
+    this.capture();
+    this.capture();
+  }
+
+  /** Swap to another car: new bodywork, wheels, lamps and handling on the same physics body. */
+  setModel(def: CarDef) {
+    if (this.def?.info.id === def.info.id) return;
+    const spec = def.spec;
+    for (const part of [...this.model.children]) {
+      part.traverse((o) => {
+        const m = o as THREE.Mesh;
+        if (m.isMesh) m.geometry.dispose();
+      });
+      this.model.remove(part);
+    }
+    const old = this.mats;
+    // see-through glass shows the cabin; a blacked-out car gets dark glass and no cabin
+    this.mats = makeCarMaterials(def.paint, spec.plate, { seeThrough: !def.blackout, rim: def.rim });
+    if (old) {
+      old.plate.map?.dispose();
+      for (const m of new Set(Object.values(old))) m.dispose();
+    }
+    this.def = def;
+
+    const parts = buildCar(spec, { includeWheels: false, interior: !def.blackout });
+    const body = carMeshes(parts, this.mats);
+    body.position.y = -TUNING.rideHeight;
+    this.model.add(body);
+    this.wheels.length = 0;
     for (let i = 0; i < 4; i++) {
       const w = wheelMesh(parts, this.mats, i % 2 === 0 ? 1 : -1);
       w.rotation.order = 'YXZ';
       this.wheels.push(w);
-      this.root.add(w);
+      this.model.add(w);
     }
+    const [hx, hy, hz] = def.mounts.headlamp;
+    this.lamps.forEach((spot, i) => {
+      const s = i === 0 ? 1 : -1;
+      spot.position.set(s * hx, hy - TUNING.rideHeight, hz);
+      spot.target.position.set(s * (hx + 0.23), hy - TUNING.rideHeight - 0.6, hz + 9.5);
+    });
 
-    // headlamp beams for the darker garage interior
-    for (const s of [-1, 1]) {
-      const spot = new THREE.SpotLight(0xfff1d6, 18, 32, 0.42, 0.6, 1.6);
-      spot.position.set(s * 0.57, 0.0, 2.5);
-      spot.target.position.set(s * 0.8, -0.6, 12);
-      this.root.add(spot, spot.target);
-    }
-
-    scene.add(this.root);
-    this.capture();
-    this.capture();
+    const box = (b: { half: number[]; at: number[] }) => ({
+      half: { x: b.half[0], y: b.half[1], z: b.half[2] },
+      at: { x: b.at[0], y: b.at[1] - TUNING.rideHeight, z: b.at[2] },
+    });
+    this.sim.fit(
+      { frontAxleZ: spec.frontAxleZ, rearAxleZ: spec.rearAxleZ, track: spec.track, radius: spec.wheelR },
+      def.handling,
+      { body: box(def.chassis.body), cabin: box(def.chassis.cabin) },
+    );
+    this.onModel();
   }
 
   get body() {

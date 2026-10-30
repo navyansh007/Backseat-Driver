@@ -7,7 +7,6 @@ import type { CarAudio } from '../audio';
 import type { PlayerCar } from '../playerCar';
 import type { Breakables } from '../world/breakables';
 import type { Mover } from '../world/hedges';
-import { SPECS } from '../models/carModel';
 import { TRAP_KINDS, type ActionState, type TelemetryMsg, type TrapKind } from '../../shared/protocol';
 import { Fleet, type Enemy, type EnemyStats, type FleetContext, type Role } from './enemies';
 import { TRAP_SPECS, Traps, type TrapContext } from './traps';
@@ -20,7 +19,6 @@ const REPAIR_ON_CLEAR = 0.3;
 const KIT_HEAL = 160;
 const KIT_LIFE = 25;
 const POINTS: Record<Role, number> = { chaser: 100, gunner: 150, heavy: 300 };
-const PLAYER_PAINT = new THREE.Color(0x5b636c);
 
 /** Open asphalt inside the car park where a wave can roll in from. */
 const SPAWNS: [number, number][] = [
@@ -361,9 +359,9 @@ export class ActionMode {
     const t = body.translation();
     const r = body.rotation();
     const v = body.linvel();
-    const spec = SPECS.executive;
+    const spec = this.car.def.spec;
     const pos = new THREE.Vector3(t.x, t.y - 0.6, t.z);
-    this.wreck.carExplode(pos, new THREE.Quaternion(r.x, r.y, r.z, r.w), new THREE.Vector3(v.x, v.y, v.z), new THREE.Vector3(spec.W, spec.H, spec.L), PLAYER_PAINT, pos.y);
+    this.wreck.carExplode(pos, new THREE.Quaternion(r.x, r.y, r.z, r.w), new THREE.Vector3(v.x, v.y, v.z), new THREE.Vector3(spec.W, spec.H, spec.L), new THREE.Color(this.car.def.paint), pos.y);
     this.fx.explosion(pos.clone().setY(pos.y + 0.8), 1.4);
     this.audio.explosion(0, 1.4);
     this.car.setShown(false);
