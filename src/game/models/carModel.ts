@@ -32,13 +32,15 @@ export interface CarSpec {
   rearAxleZ: number;
   track: number; // half distance between wheel centres
   rear: RearStyle;
-  grille: 'executive' | 'slim' | 'tall' | 'vane';
+  grille: 'executive' | 'slim' | 'tall' | 'vane' | 'quad';
   plate?: string;
   // ---- optional shaping, for cars that aren't three-box saloons
   /** chrome window surrounds (default: executive only) */
   chromeTrim?: boolean;
   /** wheel design (default: classic 5-spoke, 'multi' for the executive) */
-  wheels?: 'classic' | 'multi' | 'sport';
+  wheels?: 'classic' | 'multi' | 'sport' | 'magnum';
+  /** raised white lettering on the tyre walls */
+  letters?: boolean;
   /** how far the glasshouse sits in from the body side, and how hard it leans in (default 0.13, 0.3) */
   cabinInset?: number;
   tumble?: number;
@@ -49,11 +51,19 @@ export interface CarSpec {
   /** where the B-pillar sits between roof front and rear, 0–1 (default 0.45, 0.28 for a box) */
   pillar?: number;
   doors?: 2 | 4;
-  bumpers?: 'saloon' | 'sport';
+  bumpers?: 'saloon' | 'sport' | 'chrome';
+  /** a fastback's tail lamps: one slim blade each side (default), or a three-lens lamp in a chrome bezel */
+  tailLamps?: 'blade' | 'triple';
   /** side strake on the front wings */
   strake?: boolean;
   /** smooth one-piece lofted bodywork instead of the extruded saloon body and cabin */
   loft?: LoftShape;
+  /**
+   * Late-60s muscle car dressing for a lofted fastback: a bonnet scoop (front z, rear z, half width,
+   * height), slats over the rear window, a wing on the deck (front and rear z) and a dummy scoop in
+   * each rear quarter (its front z). Also brings a wing antenna, fender badges and side markers.
+   */
+  muscle?: { scoop: [number, number, number, number]; louvers: number; wing: [number, number]; quarterScoop: number; badge: [string, string] };
 }
 
 export const SPECS: Record<string, CarSpec> = {
@@ -88,14 +98,18 @@ export const SPECS: Record<string, CarSpec> = {
 
 export type PartKey =
   | 'paint' | 'glass' | 'sideGlass' | 'chrome' | 'trim' | 'rubber' | 'head' | 'tail' | 'amber' | 'plate' | 'under'
-  | 'disc' | 'caliper' | 'interior' | 'ao';
+  | 'disc' | 'caliper' | 'interior' | 'ao' | 'letters';
 
 export interface CarParts {
   spec: CarSpec;
   /** Merged geometry per material slot (body, excluding wheels when built for the player). */
   parts: Partial<Record<PartKey, THREE.BufferGeometry>>;
   /** Single wheel geometry, centered, axle along X; outer face at +X. The caliper does not spin. */
-  wheel: { rubber: THREE.BufferGeometry; chrome: THREE.BufferGeometry; trim: THREE.BufferGeometry; disc: THREE.BufferGeometry; caliper: THREE.BufferGeometry };
+  wheel: {
+    rubber: THREE.BufferGeometry; chrome: THREE.BufferGeometry; trim: THREE.BufferGeometry; disc: THREE.BufferGeometry; caliper: THREE.BufferGeometry;
+    /** raised white letters on the tyre wall, when the spec asks for them */
+    letters?: THREE.BufferGeometry;
+  };
   /** Wheel centres in car space (FL, FR, RL, RR). */
   wheelPositions: THREE.Vector3[];
 }
@@ -433,6 +447,41 @@ export function buildCar(spec: CarSpec, opts: { includeWheels: boolean; interior
       bag.add('trim', onNose(housing, s * 0.6, ly, -0.012));
       bag.add('head', onNose(flip(new THREE.ShapeGeometry(lamp, 8)), s * 0.6, ly, 0.024));
     }
+  } else if (spec.grille === 'quad') {
+    // late-60s face: a wide, dark grille recessed under the overhanging brow of the bonnet and wings,
+    // the inner pair of headlamps at its ends and the outer pair in pockets in the wing tips
+    const gy = 0.6;
+    const gs = new THREE.Shape();
+    const gw = 0.63, gh = 0.095;
+    gs.moveTo(-gw, -gh);
+    gs.lineTo(gw, -gh);
+    gs.quadraticCurveTo(gw + 0.04, -gh, gw + 0.04, -gh + 0.04);
+    gs.lineTo(gw + 0.04, gh - 0.03);
+    gs.quadraticCurveTo(gw + 0.04, gh, gw, gh);
+    gs.lineTo(-gw, gh);
+    gs.quadraticCurveTo(-gw - 0.04, gh, -gw - 0.04, gh - 0.03);
+    gs.lineTo(-gw - 0.04, -gh + 0.04);
+    gs.quadraticCurveTo(-gw - 0.04, -gh, -gw, -gh);
+    bag.add('under', onNose(new THREE.ShapeGeometry(gs, 6), 0, gy, 0.003));
+    const rimGeo = new THREE.ExtrudeGeometry(gs, { depth: 0.01, bevelEnabled: true, bevelThickness: 0.006, bevelSize: 0.01, bevelSegments: 2, curveSegments: 6 });
+    bag.add('chrome', onNose(rimGeo, 0, gy, -0.008));
+    bag.add('under', onNose(new THREE.ExtrudeGeometry(gs, { depth: 0.016, bevelEnabled: false, curveSegments: 6 }), 0, gy, -0.004));
+    // egg-crate mesh: fine bars across and up the opening, standing proud of the dark back
+    for (let i = 1; i < 6; i++) bag.add('trim', onNose(new THREE.BoxGeometry(gw * 2, 0.006, 0.012, 24, 1, 1), 0, gy - gh + (i * gh * 2) / 6, 0.008));
+    for (let x = -gw + 0.05; x < gw; x += 0.05) bag.add('trim', onNose(new THREE.BoxGeometry(0.006, gh * 2 - 0.01, 0.012), x, gy, 0.008));
+    for (const s of [-1, 1]) {
+      for (const [x, pocket] of [[0.53, false], [0.77, true]] as const) {
+        // the outer lamps sit in a dark round pocket in the wing tip; the inner ones in the grille
+        if (pocket) bag.add('under', onNose(new THREE.CylinderGeometry(0.09, 0.09, 0.03, 24).rotateX(Math.PI / 2), s * x, gy, -0.004));
+        bag.add('trim', onNose(new THREE.CylinderGeometry(0.078, 0.078, 0.03, 24).rotateX(Math.PI / 2), s * x, gy, 0.004));
+        const lens = new THREE.SphereGeometry(0.068, 20, 8, 0, Math.PI * 2, 0, Math.PI / 2);
+        lens.scale(1, 0.25, 1).rotateX(Math.PI / 2);
+        bag.add('head', onNose(lens, s * x, gy, 0.016));
+        bag.add('chrome', onNose(new THREE.TorusGeometry(0.073, 0.009, 6, 24), s * x, gy, 0.02));
+      }
+      // parking lamps in the valence under the bumper
+      bag.add('amber', onNose(roundedBox(0.16, 0.045, 0.02, 0.012), s * 0.5, 0.39, 0.006));
+    }
   } else {
     const gw = spec.grille === 'tall' ? 0.7 : 0.6;
     const gh = spec.grille === 'tall' ? 0.2 : 0.09;
@@ -444,7 +493,44 @@ export function buildCar(spec: CarSpec, opts: { includeWheels: boolean; interior
     }
   }
   // bumpers
-  if (spec.bumpers === 'sport') {
+  const chromeBumpers = spec.bumpers === 'chrome' && loft;
+  if (chromeBumpers) {
+    // slim chrome blades that wrap round the nose and tail back towards the wheel arches, a black
+    // chin spoiler under the front valence
+    const blade: [number, number][] = [[-0.02, -0.04], [0.035, -0.045], [0.062, -0.025], [0.07, 0.01], [0.06, 0.04], [0.03, 0.05], [-0.02, 0.045]];
+    const outline = (y: number, nose: boolean, zEnd: number) => {
+      // march out from a point inside the body to its surface, sweeping from one side round to the other
+      const sgn = nose ? 1 : -1;
+      const zc = sgn * (hz - 0.75);
+      const surf = nose ? noseZ : tailZ;
+      const inside = (x: number, z: number) => Math.abs(x) <= bodyHW(y, z) && sgn * z <= sgn * surf(Math.abs(x), y);
+      const end = Math.atan2(bodyHW(y, zEnd), Math.abs(zEnd - zc));
+      const path: [number, number][] = [];
+      for (let i = 0; i <= 40; i++) {
+        const th = sgn * end * (1 - (2 * i) / 40);
+        const dx = Math.sin(th), dz = sgn * Math.cos(th);
+        let r = 0;
+        while (inside(dx * (r + 0.02), zc + dz * (r + 0.02)) && r < 3) r += 0.02;
+        let a = r, b = r + 0.02;
+        for (let k = 0; k < 10; k++) {
+          const mid = (a + b) / 2;
+          if (inside(dx * mid, zc + dz * mid)) a = mid;
+          else b = mid;
+        }
+        path.push([dx * a, zc + dz * a]);
+      }
+      // ease the corners a touch
+      for (let pass = 0; pass < 2; pass++) {
+        for (let i = 1; i < path.length - 1; i++) {
+          path[i] = [(path[i - 1][0] + 2 * path[i][0] + path[i + 1][0]) / 4, (path[i - 1][1] + 2 * path[i][1] + path[i + 1][1]) / 4];
+        }
+      }
+      return path;
+    };
+    bag.add('chrome', sweep(outline(0.495, true, hz - 0.52), 0.495, blade));
+    bag.add('chrome', sweep(outline(0.545, false, -hz + 0.14), 0.545, blade));
+    bag.add('trim', roundedBox(1.36, 0.022, 0.18, 0.01), at(0, 0.255, noseZ(0, 0.3) - 0.07, -0.1));
+  } else if (spec.bumpers === 'sport') {
     // a splitter under the nose and a finned diffuser under the tail instead of bumpers
     const sz = loft ? noseZ(0, bottom + 0.12) - 0.13 : front - 0.12;
     const dz = loft ? tailZ(0, bottom + 0.2) + 0.16 : -hz + 0.14;
@@ -467,6 +553,16 @@ export function buildCar(spec: CarSpec, opts: { includeWheels: boolean; interior
       bag.add('amber', box(W * 0.07, 0.12, 0.05), at(s * W * 0.135, ty, -hz + 0.003));
     }
     bag.add('chrome', box(W * 0.12, 0.02, 0.04), at(0, ty + 0.05, -hz + 0.005));
+  } else if (spec.rear === 'fastback' && spec.tailLamps === 'triple') {
+    // a wide lamp each side split into three lenses by chrome bars, in a chrome bezel; the fuel cap between
+    const ty = trunkH - 0.22;
+    for (const s of [-1, 1]) {
+      bag.add('chrome', onTail(roundedBox(0.42, 0.15, 0.02, 0.025), s * 0.47, ty, 0.004));
+      for (const k of [-1, 0, 1]) bag.add('tail', onTail(roundedBox(0.125, 0.115, 0.02, 0.012), s * 0.47 + k * 0.135, ty, 0.012));
+    }
+    const cap = new THREE.CylinderGeometry(0.075, 0.075, 0.025, 24).rotateX(Math.PI / 2);
+    bag.add('chrome', onTail(cap, 0, ty, 0.008));
+    bag.add('trim', onTail(new THREE.CylinderGeometry(0.05, 0.05, 0.02, 24).rotateX(Math.PI / 2), 0, ty, 0.016));
   } else if (spec.rear === 'fastback') {
     // one slim blade each side, bent round the tail under the ducktail lip
     const ty = trunkH - 0.11;
@@ -490,8 +586,10 @@ export function buildCar(spec: CarSpec, opts: { includeWheels: boolean; interior
   }
   // plates
   const plateGeo = box(0.52, 0.12, 0.012);
-  if (spec.grille !== 'vane') bag.add('plate', plateGeo, at(0, bottom + 0.27, front + 0.015)); // no front plate over that grille
-  bag.add('plate', plateGeo, at(0, spec.rear === 'notch' ? trunkH - 0.34 : spec.rear === 'fastback' ? bottom + 0.33 : beltH - 0.4, tailZ(0.26, bottom + 0.33) - 0.012, 0, Math.PI));
+  if (spec.grille !== 'vane' && spec.grille !== 'quad') bag.add('plate', plateGeo, at(0, bottom + 0.27, front + 0.015)); // no front plate over that grille
+  // under the rear bumper on the muscle car
+  const plateY = chromeBumpers ? 0.43 : spec.rear === 'notch' ? trunkH - 0.34 : spec.rear === 'fastback' ? bottom + 0.33 : beltH - 0.4;
+  bag.add('plate', plateGeo, at(0, plateY, tailZ(0.26, chromeBumpers ? plateY : bottom + 0.33) - 0.012, 0, Math.PI));
 
   // mirrors
   for (const s of [-1, 1]) {
@@ -524,10 +622,10 @@ export function buildCar(spec: CarSpec, opts: { includeWheels: boolean; interior
       bag.add('chrome', box(0.012, 0.012, 0.32), at(s * (bodyHW(beltH - 0.18, sz) + 0.009), beltH - 0.18, sz));
     }
     // belt-line chrome
-    if (spec.bumpers !== 'sport') bag.add('chrome', box(0.012, 0.012, spec.wsBaseZ - spec.rwBaseZ - 0.2), at(s * (bodyHW(beltH, 0) - 0.005), beltH - 0.005, (spec.wsBaseZ + spec.rwBaseZ) / 2));
+    if ((spec.bumpers ?? 'saloon') === 'saloon') bag.add('chrome', box(0.012, 0.012, spec.wsBaseZ - spec.rwBaseZ - 0.2), at(s * (bodyHW(beltH, 0) - 0.005), beltH - 0.005, (spec.wsBaseZ + spec.rwBaseZ) / 2));
   }
   // exhaust: one pipe on a saloon, a pair either side of the diffuser on a sports car
-  const pipes = spec.bumpers === 'sport' ? [-W * 0.34, -W * 0.27, W * 0.27, W * 0.34] : [-W * 0.3];
+  const pipes = spec.bumpers === 'sport' ? [-W * 0.34, -W * 0.27, W * 0.27, W * 0.34] : chromeBumpers ? [-0.58, 0.58] : [-W * 0.3];
   for (const x of pipes) {
     const py = loft ? bottom + 0.08 : bottom + 0.05;
     bag.add('chrome', new THREE.CylinderGeometry(0.035, 0.035, 0.12, 12), at(x, py, loft ? tailZ(Math.abs(x), py + 0.04) + 0.03 : -hz + 0.02, Math.PI / 2));
@@ -545,7 +643,120 @@ export function buildCar(spec: CarSpec, opts: { includeWheels: boolean; interior
       bag.add('trim', wrapPanel(seam, side, (y, z) => bodyHW(y, z) + 0.0015));
     }
     // side indicator repeater on the front wing
-    bag.add('amber', box(0.012, 0.025, 0.07), at(side * (bodyHW(beltH - 0.16, spec.frontAxleZ + 0.55) + 0.004), beltH - 0.16, spec.frontAxleZ + 0.55));
+    if (!spec.muscle) bag.add('amber', box(0.012, 0.025, 0.07), at(side * (bodyHW(beltH - 0.16, spec.frontAxleZ + 0.55) + 0.004), beltH - 0.16, spec.frontAxleZ + 0.55));
+  }
+
+  if (spec.muscle && loft) {
+    const lf = loft;
+    const mu = spec.muscle;
+    const shape = spec.loft!;
+    // bonnet scoop: a long, low box with an open mouth at the front, its top easing down to the bonnet
+    const [sf, sr, sw, sh] = mu.scoop;
+    const len = sf - sr;
+    const prof = new THREE.Shape();
+    prof.moveTo(sr, 0);
+    prof.lineTo(sf, 0);
+    prof.lineTo(sf + 0.012, sh);
+    prof.quadraticCurveTo(sf - 0.03, sh + 0.006, sf - len * 0.35, sh * 0.96);
+    prof.quadraticCurveTo(sr + len * 0.12, sh * 0.85, sr, 0);
+    const bev = 0.025;
+    const scoop = new THREE.ExtrudeGeometry(prof, {
+      depth: sw * 2 - bev * 2, bevelEnabled: true, bevelThickness: bev, bevelSize: bev * 0.6, bevelOffset: -bev * 0.6, bevelSegments: 3, curveSegments: 8,
+    });
+    scoop.rotateY(-Math.PI / 2);
+    scoop.translate(sw - bev, 0, 0);
+    // sit it on the crown of the bonnet, a little narrower at the back, its sides sloping in to a
+    // narrower top so it blends into the bonnet instead of standing on it like a box
+    sculpt(scoop, (x, y, z) => x * (1 - 0.14 * Math.min(1, Math.max(0, (sf - z) / len))) * (1 - 0.3 * Math.max(0, y) / sh));
+    const sp = scoop.attributes.position as THREE.BufferAttribute;
+    for (let i = 0; i < sp.count; i++) sp.setY(i, sp.getY(i) + lf.topY(sp.getZ(i)) - 0.025);
+    bag.add('paint', toCreasedNormals(scoop, 0.6));
+    const mouthY = lf.topY(sf);
+    bag.add('under', box(sw * 2 - 0.07, sh - 0.03, 0.01), at(0, mouthY + sh / 2 - 0.01, sf + 0.008));
+
+    // slats over the rear window, standing out from the glass like a flight of steps, on two side rails
+    const z0 = shape.glass.roofRear - 0.03, z1 = shape.glass.rwBase + 0.06;
+    const slope = (z: number) => Math.atan2(lf.topY(z + 0.02) - lf.topY(z - 0.02), 0.04);
+    // height of the rear glass at x across the car: where the glasshouse is that wide
+    const glassY = (x: number, z: number) => {
+      let lo = beltH, hi = lf.topY(z);
+      for (let k = 0; k < 14; k++) {
+        const m = (lo + hi) / 2;
+        if (lf.cabinW(m, z) > x) lo = m;
+        else hi = m;
+      }
+      return (lo + hi) / 2;
+    };
+    const step = (z0 - z1) / mu.louvers;
+    const spanAt = (z: number) => Math.min(lf.cabinW(lf.topY(z) - 0.06, z) - 0.03, shape.roofHalf - 0.02);
+    for (let i = 0; i < mu.louvers; i++) {
+      const z = z0 - step * (i + 0.5);
+      const half = spanAt(z);
+      // each slat lies level, its front edge on the glass, and bends across with the crown of the glass
+      const slat = new THREE.BoxGeometry(half * 2, 0.01, step * 1.05, 16, 1, 1);
+      slat.rotateX(-slope(z) * 0.3);
+      const sp2 = slat.attributes.position as THREE.BufferAttribute;
+      for (let k = 0; k < sp2.count; k++) sp2.setY(k, sp2.getY(k) + glassY(Math.abs(sp2.getX(k)), z + step * 0.5) + 0.01);
+      slat.computeVertexNormals();
+      bag.add('trim', slat, at(0, 0, z));
+    }
+    for (const s of [-1, 1]) {
+      const zm = (z0 + z1) / 2;
+      const half = spanAt(zm);
+      const rail = Math.hypot(z0 - z1, lf.topY(z0) - lf.topY(z1));
+      bag.add('trim', box(0.035, 0.03, rail), at(s * half, (glassY(half, z0) + glassY(half, z1)) / 2 + 0.015, zm, -slope(zm)));
+    }
+
+    // wing on the deck: a flat blade between two raked end plates
+    const [wf, wr] = mu.wing;
+    const df = lf.topY(wf), dr = lf.topY(wr);
+    const ws = new THREE.Shape();
+    ws.moveTo(wf, df - 0.02);
+    ws.lineTo(wf + 0.02, df + 0.06);
+    ws.lineTo(wr, dr + 0.05);
+    ws.lineTo(wr, dr - 0.02);
+    const plate = new THREE.ExtrudeGeometry(ws, { depth: 0.022, bevelEnabled: false });
+    plate.rotateY(-Math.PI / 2);
+    const wingHalf = 0.66;
+    for (const s of [-1, 1]) bag.add('trim', plate.clone(), at(s * wingHalf + 0.011, 0, 0));
+    const chord = Math.hypot(wf + 0.02 - wr, df + 0.06 - dr - 0.05);
+    bag.add('trim', roundedBox(wingHalf * 2, 0.018, chord, 0.008), at(0, (df + dr + 0.11) / 2 - 0.009, (wf + 0.02 + wr) / 2, -Math.atan2(df + 0.06 - dr - 0.05, wf + 0.02 - wr)));
+
+    for (const s of [-1, 1]) {
+      // dummy scoop in the rear quarter, just behind the door: tall at the front, tapering back
+      const q = mu.quarterScoop;
+      const scoopPoly: [number, number][] = [[q, beltH - 0.17], [q, beltH - 0.02], [q - 0.22, beltH - 0.04], [q - 0.22, beltH - 0.11]];
+      bag.add('under', wrapPanel(scoopPoly, s, (y, z) => bodyHW(y, z) + 0.002));
+      // a thin chrome bar parting the quarter window from the door glass
+      const zq = zB;
+      const dy = (H - 0.06 - beltH - 0.04) / 6;
+      for (let k = 0; k < 6; k++) {
+        const y = beltH + 0.04 + dy * (k + 0.5);
+        bag.add('chrome', box(0.01, dy + 0.002, 0.016), at(s * (lf.cabinW(y, zq) + 0.004), y, zq));
+      }
+      // running-horse roundel on the sail panel, tipped to sit flush with it
+      const ey = (beltH + H) / 2 + 0.01, ez = shape.glass.sideRear - 0.09;
+      const lean = Math.atan2(lf.cabinW(ey - 0.02, ez) - lf.cabinW(ey + 0.02, ez), 0.04);
+      bag.add('chrome', new THREE.CylinderGeometry(0.035, 0.035, 0.01, 18), at(s * (lf.cabinW(ey, ez) + 0.002), ey, ez, 0, 0, Math.PI / 2 + s * lean));
+      // side markers: amber at the front of the wings, red at the back of the quarters
+      bag.add('amber', roundedBox(0.09, 0.03, 0.014, 0.01).rotateY(Math.PI / 2), at(s * (bodyHW(0.58, hz - 0.3) + 0.004), 0.58, hz - 0.3));
+      bag.add('tail', roundedBox(0.09, 0.03, 0.014, 0.01).rotateY(Math.PI / 2), at(s * (bodyHW(0.56, -hz + 0.2) + 0.004), 0.56, -hz + 0.2));
+      // two-line chrome badge on the front wings, behind the wheel arch, reading left to right from either side
+      const bz = spec.frontAxleZ - 0.55;
+      const bpx = 0.0085;
+      mu.badge.forEach((line, row) => {
+        const by = 0.585 - row * bpx * 6.5;
+        for (const [a, u] of pixelText(line)) {
+          const y = by + u * bpx, z = bz - s * a * bpx;
+          bag.add('chrome', box(0.005, bpx * 0.92, bpx * 0.92), at(s * (bodyHW(y, z) + 0.002), y, z));
+        }
+      });
+    }
+    // radio aerial on the left front wing, near the screen
+    const az = spec.wsBaseZ + 0.07;
+    const ax = bodyHW(beltH - 0.02, az) - 0.07;
+    bag.add('chrome', new THREE.CylinderGeometry(0.014, 0.018, 0.03, 10), at(ax, beltH + 0.0, az));
+    bag.add('chrome', new THREE.CylinderGeometry(0.0035, 0.005, 0.62, 6), at(ax, beltH + 0.32, az));
   }
 
   // dark wheel-arch liners so you can't see through the arches
@@ -598,7 +809,7 @@ export function buildCar(spec: CarSpec, opts: { includeWheels: boolean; interior
   }
 
   // ----------------------------------------------------------------- wheels
-  const wheel = buildWheel(spec.wheelR, spec.wheelW, spec.wheels ?? (spec.name === 'executive' ? 'multi' : 'classic'));
+  const wheel = buildWheel(spec.wheelR, spec.wheelW, spec.wheels ?? (spec.name === 'executive' ? 'multi' : 'classic'), spec.letters);
   const wheelPositions = [
     new THREE.Vector3(spec.track, spec.wheelR, spec.frontAxleZ),
     new THREE.Vector3(-spec.track, spec.wheelR, spec.frontAxleZ),
@@ -615,6 +826,7 @@ export function buildCar(spec: CarSpec, opts: { includeWheels: boolean; interior
       bag.add('trim', flipIfNeeded(wheel.trim, m, s));
       bag.add('disc', flipIfNeeded(wheel.disc, m, s));
       bag.add('caliper', flipIfNeeded(wheel.caliper, m, s));
+      if (wheel.letters) bag.add('letters', flipIfNeeded(wheel.letters, m, s));
     }
   }
 
@@ -701,11 +913,78 @@ function wrapPanel(poly: [number, number][], side: number, xAt: (y: number, z: n
   return idx;
 }
 
+// a 3×5 pixel font, rows top to bottom, for raised tyre lettering and badges
+const GLYPHS: Record<string, string> = {
+  A: '010101111101101', B: '110101110101110', D: '110101101101110', E: '111100110100111', G: '111100101101111',
+  L: '100100100100111', O: '111101101101111', P: '111101111100100', R: '110101110101101', S: '111100111001111',
+  T: '111010010010010', Y: '101101010010010', '2': '111001111100111', '4': '101101111001001', '9': '111101111001111',
+};
+
+/** The lit pixels of a line of text as (across, up) offsets in pixels, centred on the line's middle. */
+function pixelText(text: string): [number, number][] {
+  const out: [number, number][] = [];
+  const width = text.length * 4 - 1;
+  [...text].forEach((ch, k) => {
+    const g = GLYPHS[ch];
+    if (!g) return;
+    for (let i = 0; i < 15; i++) if (g[i] === '1') out.push([k * 4 + (i % 3) - (width - 1) / 2, 2 - Math.floor(i / 3)]);
+  });
+  return out;
+}
+
+/**
+ * A bar swept along a path in plan (x, z) at height y. The cross-section is (outward, up) pairs, where
+ * outward is the path's right-hand side; ends are capped.
+ */
+function sweep(path: [number, number][], y: number, section: [number, number][]) {
+  const n = path.length;
+  const rings: THREE.Vector3[][] = [];
+  const centres: THREE.Vector3[] = [];
+  const tangents: THREE.Vector3[] = [];
+  const oc = section.reduce((a, p) => a + p[0], 0) / section.length;
+  const uc = section.reduce((a, p) => a + p[1], 0) / section.length;
+  for (let i = 0; i < n; i++) {
+    const [xa, za] = path[Math.max(0, i - 1)], [xb, zb] = path[Math.min(n - 1, i + 1)];
+    const t = new THREE.Vector3(xb - xa, 0, zb - za).normalize();
+    const nx = t.z, nz = -t.x;
+    const [x, z] = path[i];
+    rings.push(section.map(([o, u]) => new THREE.Vector3(x + nx * o, y + u, z + nz * o)));
+    centres.push(new THREE.Vector3(x + nx * oc, y + uc, z + nz * oc));
+    tangents.push(t);
+  }
+  const pos: number[] = [];
+  const e1 = new THREE.Vector3(), e2 = new THREE.Vector3(), c = new THREE.Vector3();
+  // each triangle wound to face away from `from` (or along `dir` for the caps)
+  const tri = (a: THREE.Vector3, b: THREE.Vector3, d: THREE.Vector3, out: THREE.Vector3) => {
+    e1.subVectors(b, a);
+    e2.subVectors(d, a);
+    const flip = e1.cross(e2).dot(out) < 0;
+    for (const p of flip ? [a, d, b] : [a, b, d]) pos.push(p.x, p.y, p.z);
+  };
+  const m = section.length;
+  for (let i = 0; i < n - 1; i++) {
+    const mid = centres[i].clone().add(centres[i + 1]).multiplyScalar(0.5);
+    for (let k = 0; k < m; k++) {
+      const a = rings[i][k], b = rings[i][(k + 1) % m], d = rings[i + 1][k], f = rings[i + 1][(k + 1) % m];
+      c.copy(a).add(b).add(d).add(f).multiplyScalar(0.25).sub(mid);
+      tri(a, b, d, c);
+      tri(b, f, d, c);
+    }
+  }
+  for (const [i, sgn] of [[0, -1], [n - 1, 1]] as const) {
+    const out = tangents[i].clone().multiplyScalar(sgn);
+    for (let k = 0; k < m; k++) tri(centres[i], rings[i][k], rings[i][(k + 1) % m], out);
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  return toCreasedNormals(geo, 0.7);
+}
+
 /** Wheel: lathe-turned tyre, dished rim with spokes. Axle along X, outer face at +X. */
-function buildWheel(r: number, w: number, style: 'classic' | 'multi' | 'sport') {
+function buildWheel(r: number, w: number, style: 'classic' | 'multi' | 'sport' | 'magnum', letters = false) {
   const multiSpoke = style === 'multi';
-  // big rims on thin sidewalls for the sports wheel
-  const rimR = r * (style === 'sport' ? 0.76 : 0.66);
+  // big rims on thin sidewalls for the sports wheel, small rims on tall sidewalls for the old muscle car
+  const rimR = r * (style === 'sport' ? 0.76 : style === 'magnum' ? 0.6 : 0.66);
   const pts = [
     new THREE.Vector2(rimR * 0.98, -w / 2),
     new THREE.Vector2(r - 0.045, -w / 2),
@@ -729,7 +1008,34 @@ function buildWheel(r: number, w: number, style: 'classic' | 'multi' | 'sport') 
   hub.rotateZ(Math.PI / 2);
   hub.translate(w / 2 - 0.02, 0, 0);
   chromeParts.push(hub.toNonIndexed());
-  const spokes = style === 'sport' ? 0 : multiSpoke ? 10 : 5;
+  const spokes = style === 'sport' || style === 'magnum' ? 0 : multiSpoke ? 10 : 5;
+  if (style === 'magnum') {
+    // a broad polished trim ring, and five flat spokes widening from the hub out to it over a dark centre
+    const ring = new THREE.RingGeometry(rimR * 0.7, rimR, 32, 1);
+    ring.rotateY(Math.PI / 2);
+    ring.translate(w / 2 - 0.006, 0, 0);
+    chromeParts.push(ring.toNonIndexed());
+    const inner = new THREE.TorusGeometry(rimR * 0.7, 0.007, 5, 32);
+    inner.rotateY(Math.PI / 2);
+    inner.translate(w / 2 - 0.01, 0, 0);
+    chromeParts.push(inner.toNonIndexed());
+    for (let i = 0; i < 5; i++) {
+      const sp = new THREE.BoxGeometry(0.016, rimR * 0.5, 0.05);
+      const p = sp.attributes.position as THREE.BufferAttribute;
+      // narrow at the hub, wide where it meets the ring
+      for (let k = 0; k < p.count; k++) p.setZ(k, p.getZ(k) * (p.getY(k) > 0 ? 1.15 : 0.55));
+      sp.computeVertexNormals();
+      sp.translate(0, rimR * 0.46, 0);
+      sp.rotateX((i / 5) * Math.PI * 2);
+      sp.translate(w / 2 - 0.022, 0, 0);
+      chromeParts.push(sp.toNonIndexed());
+    }
+    const cap = new THREE.SphereGeometry(rimR * 0.2, 14, 6, 0, Math.PI * 2, 0, Math.PI / 2);
+    cap.scale(1, 0.4, 1);
+    cap.rotateZ(-Math.PI / 2);
+    cap.translate(w / 2 - 0.004, 0, 0);
+    chromeParts.push(cap.toNonIndexed());
+  }
   if (style === 'sport') {
     // ten thin split spokes in pairs, each swept slightly so the wheel looks like it's turning
     for (let i = 0; i < 5; i++) {
@@ -758,9 +1064,10 @@ function buildWheel(r: number, w: number, style: 'classic' | 'multi' | 'sport') 
 
   const barrel = new THREE.CylinderGeometry(rimR * 0.97, rimR * 0.97, w * 0.9, 24, 1, true);
   barrel.rotateZ(Math.PI / 2);
+  // the dark centre: deep in the barrel, or just behind the spokes on the muscle car's wheel
   const back = new THREE.CircleGeometry(rimR * 0.97, 24);
   back.rotateY(Math.PI / 2);
-  back.translate(w * 0.1, 0, 0);
+  back.translate(style === 'magnum' ? w / 2 - 0.04 : w * 0.1, 0, 0);
   const trimParts = [barrel.toNonIndexed(), back.toNonIndexed()];
   for (const p of trimParts) {
     for (const name of Object.keys(p.attributes)) if (name !== 'position' && name !== 'normal') p.deleteAttribute(name);
@@ -783,7 +1090,29 @@ function buildWheel(r: number, w: number, style: 'classic' | 'multi' | 'sport') 
   cal.rotateX(-0.6);
   cal.translate(w / 2 - 0.1, rimR * 0.55, -rimR * 0.38);
   for (const name of Object.keys(cal.attributes)) if (name !== 'position' && name !== 'normal') cal.deleteAttribute(name);
-  return { rubber: tyre.toNonIndexed(), chrome, trim, disc, caliper: cal.index ? cal.toNonIndexed() : cal };
+
+  // raised white letters round the tyre wall, each line reading clockwise with its letters' tops outward
+  let letterGeo: THREE.BufferGeometry | undefined;
+  if (letters) {
+    const px = 0.0068;
+    const rl = (rimR + r - 0.045) / 2;
+    const dots: THREE.BufferGeometry[] = [];
+    const lines: [string, number][] = [['GOODYEAR', 90], ['POLYGLAS GT', 0], ['GOODYEAR', -90], ['POLYGLAS GT', 180]];
+    for (const [text, deg] of lines) {
+      for (const [a, u] of pixelText(text)) {
+        // across the line is clockwise round the wheel (seen from outside, where +u is −z), up is outward
+        const phi = (deg * Math.PI) / 180 - (a * px) / rl;
+        const rad = rl + u * px;
+        const dot = new THREE.BoxGeometry(0.003, px * 0.9, px * 0.9);
+        dot.rotateX(phi - Math.PI / 2);
+        dot.translate(w / 2 + 0.0015, Math.sin(phi) * rad, -Math.cos(phi) * rad);
+        for (const name of Object.keys(dot.attributes)) if (name !== 'position' && name !== 'normal') dot.deleteAttribute(name);
+        dots.push(dot.toNonIndexed());
+      }
+    }
+    letterGeo = mergeGeometries(dots)!;
+  }
+  return { rubber: tyre.toNonIndexed(), chrome, trim, disc, caliper: cal.index ? cal.toNonIndexed() : cal, letters: letterGeo };
 }
 
 // ------------------------------------------------------------------ materials
@@ -806,17 +1135,21 @@ export interface CarMaterials {
   amber: THREE.MeshStandardMaterial;
   plate: THREE.MeshStandardMaterial;
   under: THREE.MeshStandardMaterial;
+  letters: THREE.MeshStandardMaterial;
 }
 
 export function makeCarMaterials(
-  paintColor: THREE.ColorRepresentation, plateText = 'PK·2048', opts: { seeThrough?: boolean; rim?: THREE.ColorRepresentation } = {},
+  paintColor: THREE.ColorRepresentation,
+  plateText = 'PK·2048',
+  opts: { seeThrough?: boolean; rim?: THREE.ColorRepresentation; solid?: boolean; interior?: THREE.ColorRepresentation } = {},
 ): CarMaterials {
   const chrome = new THREE.MeshStandardMaterial({ color: 0xe6e9ee, metalness: 1, roughness: 0.16 });
   const sideGlass = new THREE.MeshPhysicalMaterial({ color: 0x0e1418, metalness: 0.1, roughness: 0.04, clearcoat: 1, envMapIntensity: 1.6 });
   return {
-    paint: new THREE.MeshPhysicalMaterial({
-      color: paintColor, metalness: 0.6, roughness: 0.28, clearcoat: 1, clearcoatRoughness: 0.04, envMapIntensity: 1.25,
-    }),
+    // metallic by default; a solid colour is deep gloss under the clearcoat
+    paint: new THREE.MeshPhysicalMaterial(opts.solid
+      ? { color: paintColor, metalness: 0.05, roughness: 0.16, clearcoat: 1, clearcoatRoughness: 0.03, envMapIntensity: 1.4 }
+      : { color: paintColor, metalness: 0.6, roughness: 0.28, clearcoat: 1, clearcoatRoughness: 0.04, envMapIntensity: 1.25 }),
     // the hero's screens are tinted but see-through so the cabin shows
     glass: opts.seeThrough
       ? new THREE.MeshPhysicalMaterial({ color: 0x1b262c, metalness: 0.2, roughness: 0.02, envMapIntensity: 1.8, transparent: true, opacity: 0.42, depthWrite: false })
@@ -824,7 +1157,7 @@ export function makeCarMaterials(
     sideGlass,
     disc: new THREE.MeshStandardMaterial({ color: 0x8a8d91, metalness: 0.85, roughness: 0.45 }),
     caliper: new THREE.MeshStandardMaterial({ color: 0xb3261e, metalness: 0.3, roughness: 0.45 }),
-    interior: new THREE.MeshStandardMaterial({ color: 0x3a342e, roughness: 0.85 }),
+    interior: new THREE.MeshStandardMaterial({ color: opts.interior ?? 0x3a342e, roughness: 0.85 }),
     ao: new THREE.MeshBasicMaterial({ map: blobShadowTexture(), transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3 }),
     chrome,
     rim: opts.rim === undefined ? chrome : new THREE.MeshStandardMaterial({ color: opts.rim, metalness: 0.9, roughness: 0.3 }),
@@ -835,6 +1168,7 @@ export function makeCarMaterials(
     amber: new THREE.MeshStandardMaterial({ color: 0xc9780e, emissive: 0xff8c00, emissiveIntensity: 0.15, roughness: 0.3 }),
     plate: new THREE.MeshStandardMaterial({ map: plateTexture(plateText), roughness: 0.5 }),
     under: new THREE.MeshStandardMaterial({ color: 0x0c0c0d, roughness: 1, side: THREE.DoubleSide }),
+    letters: new THREE.MeshStandardMaterial({ color: 0xe9e6dc, roughness: 0.75 }),
   };
 }
 
@@ -843,7 +1177,7 @@ export function carMeshes(parts: CarParts, mats: CarMaterials) {
   const g = new THREE.Group();
   for (const [k, geo] of Object.entries(parts.parts) as [PartKey, THREE.BufferGeometry][]) {
     const mesh = new THREE.Mesh(geo, mats[k]);
-    mesh.castShadow = !['plate', 'head', 'tail', 'amber', 'ao', 'glass'].includes(k);
+    mesh.castShadow = !['plate', 'head', 'tail', 'amber', 'ao', 'glass', 'letters'].includes(k);
     mesh.receiveShadow = k === 'paint' || k === 'under' || k === 'interior';
     if (k === 'ao') mesh.renderOrder = -1;
     if (k === 'glass') mesh.renderOrder = 2;
@@ -868,6 +1202,7 @@ export function wheelMesh(parts: CarParts, mats: CarMaterials, side: 1 | -1) {
     m.castShadow = true;
     spin.add(m);
   }
+  if (parts.wheel.letters) spin.add(new THREE.Mesh(parts.wheel.letters, mats.letters));
   const caliper = new THREE.Mesh(parts.wheel.caliper, mats.caliper);
   inner.add(spin, caliper);
   g.add(inner);

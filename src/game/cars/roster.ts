@@ -16,6 +16,10 @@ export interface CarDef {
   rim?: number;
   /** dark, opaque glass and no cabin behind it */
   blackout?: boolean;
+  /** solid gloss paint instead of metallic */
+  solid?: boolean;
+  /** cabin trim colour, when the glass shows it */
+  interior?: number;
   /** handling, on top of the shared TUNING */
   handling: Partial<Tuning>;
   /** collision boxes: half extents and centre, for the lower body and the cabin */
@@ -90,6 +94,59 @@ const DEFS: Record<string, Omit<CarDef, 'info'>> = {
     },
     // the long bonnet hides everything: the launcher rises out of its middle, the guns out of slots either side
     mounts: { headlamp: [0.62, 0.64, 2.15], gun: [0.45, 0.7, 1.55], gunLift: 0.16, launcher: [0.72, 1.0] },
+  },
+  // A 1969 fastback with a racing V8: long flat bonnet with a big scoop, a short cabin, a fastback roof
+  // running to a Kamm tail, slats over the rear glass and a wing on the deck. Proportions measured from
+  // a side photo of the real car (4.76 m long, 2.74 m between the axles, 1.31 m tall).
+  boss: {
+    spec: {
+      name: 'boss', L: 4.76, W: 1.82, H: 1.31, bottom: 0.24, hoodH: 0.78, beltH: 0.915, trunkH: 0.93,
+      wsBaseZ: 0.61, roofFrontZ: 0.15, roofRearZ: -0.95, rwBaseZ: -1.8,
+      wheelR: 0.33, wheelW: 0.24, frontAxleZ: 1.4, rearAxleZ: -1.34, track: 0.76,
+      rear: 'fastback', grille: 'quad', plate: 'BS·429', chromeTrim: true, wheels: 'magnum', letters: true,
+      tailLamps: 'triple', pillar: 0.66, doors: 2, bumpers: 'chrome',
+      muscle: { scoop: [1.78, 1.06, 0.31, 0.125], louvers: 7, wing: [-1.99, -2.24], quarterScoop: -0.72, badge: ['BOSS', '429'] },
+      loft: {
+        // centre line: a sharp brow over the grille, a long flat bonnet rising gently to the cowl, a raked
+        // screen, then the roof falls in one long line down the fastback to a short flat deck and a
+        // squared-off tail
+        top: [
+          [2.38, 0.74], [2.35, 0.775], [2.25, 0.8], [2.0, 0.83], [1.76, 0.85], [1.2, 0.885], [0.8, 0.91], [0.61, 0.93],
+          [0.45, 1.055], [0.3, 1.175], [0.15, 1.28], [0.0, 1.305], [-0.18, 1.31], [-0.55, 1.292], [-0.88, 1.262],
+          [-1.0, 1.245], [-1.32, 1.2], [-1.73, 1.1], [-1.98, 1.0], [-2.2, 0.945], [-2.33, 0.94], [-2.38, 0.905],
+        ],
+        // shoulder: the crease along the tops of the wings and doors, nearly level, kicking up a touch at the back
+        belt: [
+          [2.38, 0.76], [2.32, 0.8], [2.0, 0.84], [1.4, 0.87], [0.6, 0.905], [-0.7, 0.915], [-1.4, 0.925],
+          [-2.2, 0.925], [-2.38, 0.9],
+        ],
+        // plan: a broad, blunt nose, slab sides and a full-width tail
+        width: [
+          [2.38, 0.8], [2.3, 0.86], [2.1, 0.895], [1.4, 0.905], [0.6, 0.9], [-0.5, 0.9], [-1.34, 0.912], [-2.0, 0.905],
+          [-2.3, 0.88], [-2.38, 0.85],
+        ],
+        // the underside climbs steeply at the nose, so the brow juts out over a recessed grille
+        bottom: [[2.38, 0.66], [2.35, 0.6], [2.31, 0.38], [2.22, 0.26], [1.9, 0.24], [-1.9, 0.24], [-2.2, 0.27], [-2.32, 0.33], [-2.38, 0.37]],
+        roofHalf: 0.55,
+        glass: { wsBase: 0.6, roofFront: 0.14, roofRear: -1.0, rwBase: -1.8, sideFront: 0.57, sideRear: -0.88 },
+        arches: [{ z: 1.4, y: 0.33, r: 0.39 }, { z: -1.34, y: 0.33, r: 0.405 }],
+        // flat sides, widest high up, under a crisp shoulder crease that the side glass starts right on
+        flank: { sill: 0.88, widest: 0.75, shoulder: 0.985, inset: 0.13, rise: 0.012 },
+      },
+    },
+    paint: 0x0b0b0c,
+    solid: true,
+    interior: 0x1a1a1c,
+    handling: {
+      mass: 1720, engineForce: 7000, reverseForce: 4600, topSpeed: 44, brake: 90, stiffness: 28,
+      frictionFront: 2.25, frictionRear: 1.95, frictionRearHandbrake: 0.65, maxSteer: 0.58, highSpeedSteer: 0.15, steerRate: 3.0,
+    },
+    chassis: {
+      body: { half: [0.9, 0.3, 2.36], at: [0, 0.55, 0] },
+      cabin: { half: [0.6, 0.19, 0.95], at: [0, 1.1, -0.35] },
+    },
+    // guns slide out of the valence under the front bumper; the launcher rises up through the bonnet scoop
+    mounts: { headlamp: [0.65, 0.6, 2.3], gun: [0.4, 0.38, 2.12], launcher: [0.75, 1.35] },
   },
 };
 
