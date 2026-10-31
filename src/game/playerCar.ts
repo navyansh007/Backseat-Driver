@@ -67,7 +67,7 @@ export class PlayerCar {
     }
     const old = this.mats;
     // see-through glass shows the cabin; a blacked-out car gets dark glass and no cabin
-    this.mats = makeCarMaterials(def.paint, spec.plate, { seeThrough: !def.blackout, rim: def.rim });
+    this.mats = makeCarMaterials(def.paint, spec.plate, { seeThrough: !def.blackout, rim: def.rim, solid: def.solid, interior: def.interior });
     if (old) {
       old.plate.map?.dispose();
       for (const m of new Set(Object.values(old))) m.dispose();

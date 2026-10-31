@@ -27,6 +27,11 @@ export const CARS: readonly CarInfo[] = [
     blurb: 'one-off grand tourer: low, wide and very, very fast',
     stats: { speed: 5, accel: 5, grip: 4, weight: 3 },
   },
+  {
+    id: 'boss', maker: 'Fjord', model: 'Mustanger Boss 429', short: 'BOSS',
+    blurb: '1969 fastback with a racing V8 shoehorned in: all torque, not much grip',
+    stats: { speed: 4, accel: 5, grip: 2, weight: 4 },
+  },
 ];
 
 export const CAR_IDS = CARS.map((c) => c.id);

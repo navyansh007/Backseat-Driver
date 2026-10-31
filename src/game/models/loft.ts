@@ -23,6 +23,13 @@ export interface LoftShape {
   glass: { wsBase: number; roofFront: number; roofRear: number; rwBase: number; sideFront: number; sideRear: number };
   /** wheel arches cut out of the sides */
   arches: { z: number; y: number; r: number }[];
+  /**
+   * How the flank is drawn, for slab-sided cars: how wide the sill is (0.8 of the flank), how far up
+   * the side its widest point sits (0.5 of the way to the shoulder), and how far the shoulder
+   * rolls in (0.93); a shoulder near 1 makes a crisp crease. The side glass starts `inset` in from
+   * the flank (0.17) and `rise` above the shoulder (0.05).
+   */
+  flank?: { sill?: number; widest?: number; shoulder?: number; inset?: number; rise?: number };
 }
 
 export interface Loft {
@@ -32,6 +39,10 @@ export interface Loft {
   chrome: THREE.BufferGeometry;
   /** half width of the body side at height y and position z */
   halfW(y: number, z: number): number;
+  /** half width of the glasshouse (or the sail behind the side windows) at height y above the shoulder */
+  cabinW(y: number, z: number): number;
+  /** centre-line height of the top surface */
+  topY(z: number): number;
   /** z of the front (or rear) surface at lateral offset x and height y */
   frontZ(x: number, y: number): number;
   rearZ(x: number, y: number): number;
@@ -71,6 +82,8 @@ export function loftBody(L: number, shape: LoftShape): Loft {
   const hz = L / 2;
   const top = curve(shape.top), belt = curve(shape.belt), width = curve(shape.width), bottom = curve(shape.bottom);
   const g = shape.glass;
+  const sill = shape.flank?.sill ?? 0.8, widest = shape.flank?.widest ?? 0.5, shoulder = shape.flank?.shoulder ?? 0.93;
+  const inset = shape.flank?.inset ?? 0.17, rise = shape.flank?.rise ?? 0.05;
 
   // one half-section (x ≥ 0), floor centre → top centre
   const section = (z: number) => {
@@ -80,11 +93,11 @@ export function loftBody(L: number, shape: LoftShape): Loft {
     const lerp = (a: number, c: number) => a + (c - a) * cab;
     const pts: [number, number][] = [
       [0, b],
-      [0.8 * w, b],
-      [0.975 * w, b + 0.26 * (s - b)],
-      [w, b + 0.5 * (s - b)],
-      [0.93 * w, s],
-      [lerp(0.8 * w, w - 0.17), lerp((s + t) / 2, s + 0.05)],
+      [sill * w, b],
+      [0.975 * w, b + 0.52 * widest * (s - b)],
+      [w, b + widest * (s - b)],
+      [shoulder * w, s],
+      [lerp(0.8 * w, w - inset), lerp((s + t) / 2, s + rise)],
       [lerp(0.42 * w, shape.roofHalf), lerp(t + (s - t) * 0.15, t - 0.035)],
       [0, t],
     ];
@@ -199,6 +212,15 @@ export function loftBody(L: number, shape: LoftShape): Loft {
     }
     return h[IDX(4)][0];
   };
+  const cabinW = (y: number, z: number) => {
+    const h = at(z);
+    // the same, from the shoulder up over the glasshouse to the roof
+    for (let i = IDX(4) + 1; i < h.length; i++) {
+      const [x0, y0] = h[i - 1], [x1, y1] = h[i];
+      if (y0 <= y && y <= y1) return y1 === y0 ? x1 : x0 + ((y - y0) / (y1 - y0)) * (x1 - x0);
+    }
+    return 0;
+  };
   const inside = (x: number, y: number, z: number) => halfW(y, z) >= Math.abs(x) && y >= bottom(z) && y <= Math.max(top(z), belt(z));
   const surfaceZ = (x: number, y: number, from: number, step: number) => {
     for (let z = from; Math.abs(z) <= hz + 0.001; z += step) {
@@ -221,6 +243,8 @@ export function loftBody(L: number, shape: LoftShape): Loft {
     sideGlass: part(idx.sideGlass),
     chrome: part(idx.chrome),
     halfW,
+    cabinW,
+    topY: top,
     frontZ: (x, y) => surfaceZ(x, y, hz, -0.01),
     rearZ: (x, y) => surfaceZ(x, y, -hz, 0.01),
   };
