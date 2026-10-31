@@ -155,7 +155,7 @@ export class SettingsPanel {
           const b = el('button', 'segkey', o.label);
           b.append(el('i'));
           tap(b, () => {
-            if (!this.ready() || this.value(c.key) === o.value) return;
+            if (!this.ready() || this.value(c.key) === o.value || this.cfg?.locked?.includes(c.key)) return;
             this.buzz(10);
             this.set(c.key, o.value);
           });
@@ -165,6 +165,7 @@ export class SettingsPanel {
         this.renders.push(() => {
           const v = this.value(c.key);
           c.options.forEach((o, i) => keys[i].classList.toggle('on', o.value === v));
+          row.classList.toggle('locked', !!this.cfg?.locked?.includes(c.key));
         });
         return row;
       }
@@ -238,6 +239,8 @@ export class SettingsPanel {
         if (c.id === 'act-play') {
           this.renders.push(() => { b.textContent = this.cfg?.playing ? 'pairing screen' : 'drive'; });
         }
+        // in an arena match you can't leave or jump back to the start from the phone
+        if (c.id === 'act-play' || c.c === 'respawn') this.renders.push(() => b.classList.toggle('gone', !!this.cfg?.arena));
         return b;
       }
       case 'note': {
@@ -253,6 +256,7 @@ export class SettingsPanel {
     if (!cfg) return '';
     switch (id) {
       case 'drive-state':
+        if (cfg.arena) return 'in an arena match · car and mode are locked until it ends';
         return cfg.playing ? 'driving' : 'on the pairing screen';
       case 'audio-note':
         return cfg.audio ? '' : 'click the game screen once to let it play sound';

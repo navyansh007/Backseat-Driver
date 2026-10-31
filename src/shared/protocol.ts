@@ -43,6 +43,16 @@ export interface TelemetryMsg {
   tk?: number[];
   /** radar: [bearing in degrees (0 = ahead, + = right), distance in m] per pursuer, flattened */
   rad?: number[];
+  // ---- arena only
+  /** our place in the standings, of how many */
+  place?: number;
+  of?: number;
+  /** our destruction points */
+  pts?: number;
+  /** seconds until we're back in after a wreck (present only while wrecked) */
+  back?: number;
+  /** seconds left in the match */
+  left?: number;
 }
 
 export type ActionState = 'fight' | 'break' | 'over';
@@ -102,6 +112,10 @@ export interface SettingsMsg extends Settings {
   backend: RendererChoice;
   /** the game page has been clicked, so the browser lets it play sound */
   audio: boolean;
+  /** in an online arena match */
+  arena?: boolean;
+  /** settings the phone can't change right now (the car and mode, mid-match) */
+  locked?: SettingKey[];
 }
 
 /**

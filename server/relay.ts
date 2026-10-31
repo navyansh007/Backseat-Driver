@@ -11,6 +11,8 @@ import os from 'node:os';
 import { WebSocketServer, WebSocket } from 'ws';
 import { LAN_ENDPOINT, MAX_FRAME, RELAY_PATH } from '../src/shared/protocol';
 import { fromHost, fromRemote, parseParams, peerMsgs } from './relayCore';
+import { ARENA_PATH } from '../src/shared/arena';
+import { ArenaRoom, parseArenaParams } from './arenaCore';
 
 interface Room {
   host: WebSocket | null;
@@ -109,6 +111,58 @@ function attachRelay(httpServer: HttpServer) {
   httpServer.on('close', () => clearInterval(ping));
 }
 
+/** Multiplayer arenas: one ArenaRoom per code, on the same HTTP server. */
+function attachArenas(httpServer: HttpServer) {
+  const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_FRAME });
+  const arenas = new Map<string, ArenaRoom>();
+  const alive = new WeakMap<WebSocket, boolean>();
+
+  httpServer.on('upgrade', (req: IncomingMessage, socket: Duplex, head: Buffer) => {
+    if (new URL(req.url ?? '/', 'http://local').pathname !== ARENA_PATH) return;
+    wss.handleUpgrade(req, socket, head, (ws) => {
+      const params = parseArenaParams(req.url ?? '/');
+      if (!params) {
+        ws.close(1008, 'bad params');
+        return;
+      }
+      let arena = arenas.get(params.room);
+      if (!arena) {
+        arena = new ArenaRoom(params.room);
+        arenas.set(params.room, arena);
+      }
+      const room = arena;
+      const conn = { send: (text: string) => send(ws, text), close: (code?: number, reason?: string) => ws.close(code, reason) };
+      alive.set(ws, true);
+      ws.on('pong', () => alive.set(ws, true));
+      ws.on('error', () => ws.terminate());
+      ws.on('message', (data, isBinary) => {
+        if (!isBinary) room.message(conn, data.toString());
+      });
+      ws.on('close', () => room.leave(conn));
+      room.join(conn, params.id);
+    });
+  });
+
+  // the match clock and dropped players need a tick even when nobody is sending; a heartbeat every 5 s
+  let beats = 0;
+  const timer = setInterval(() => {
+    for (const [code, arena] of arenas) {
+      arena.tick();
+      if (arena.empty) arenas.delete(code);
+    }
+    if (++beats % 10) return;
+    for (const ws of wss.clients) {
+      if (!alive.get(ws)) {
+        ws.terminate();
+        continue;
+      }
+      alive.set(ws, false);
+      ws.ping();
+    }
+  }, 500);
+  httpServer.on('close', () => clearInterval(timer));
+}
+
 function mount(server: ViteDevServer | PreviewServer) {
   server.middlewares.use(LAN_ENDPOINT, (_req, res) => {
     const addr = server.httpServer?.address();
@@ -117,7 +171,10 @@ function mount(server: ViteDevServer | PreviewServer) {
     res.setHeader('cache-control', 'no-store');
     res.end(JSON.stringify({ addresses: lanAddresses(), port, publicUrl: process.env.PUBLIC_URL || null }));
   });
-  if (server.httpServer) attachRelay(server.httpServer as HttpServer);
+  if (server.httpServer) {
+    attachRelay(server.httpServer as HttpServer);
+    attachArenas(server.httpServer as HttpServer);
+  }
 }
 
 export function relayPlugin(): Plugin {

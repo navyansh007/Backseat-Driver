@@ -15,10 +15,14 @@ export class Controls {
 
   constructor(private link: RemoteLink) {
     addEventListener('keydown', (e) => {
+      if (isTyping(e)) return;
+      // Space is the handbrake: never let it "click" a button that kept focus (the car picker's arrows did)
+      if (e.code === 'Space') e.preventDefault();
       if (e.repeat) return;
       this.keys.add(e.code);
       if (e.code === 'KeyG') this.kbMissiles++;
     });
+    addEventListener('keyup', (e) => { if (e.code === 'Space' && !isTyping(e)) e.preventDefault(); });
     addEventListener('keyup', (e) => this.keys.delete(e.code));
     addEventListener('blur', () => this.keys.clear());
   }
@@ -68,3 +72,9 @@ export class Controls {
 }
 
 const clampStep = (v: number, max: number) => Math.max(-max, Math.min(max, v));
+
+/** The key went to a text field (a name or code being typed), not to the game. */
+export function isTyping(e: KeyboardEvent) {
+  const t = e.target as HTMLElement | null;
+  return !!t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable);
+}

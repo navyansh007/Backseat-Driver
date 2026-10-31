@@ -10,9 +10,15 @@
     "binding": "ASSETS"
   },
   "durable_objects": {
-    "bindings": [{ "name": "ROOMS", "class_name": "Room" }]
+    "bindings": [
+      { "name": "ROOMS", "class_name": "Room" },
+      { "name": "ARENAS", "class_name": "Arena" }
+    ]
   },
   // Free-plan Durable Objects must use the SQLite storage backend.
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Room"] }],
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["Room"] },
+    { "tag": "v2", "new_sqlite_classes": ["Arena"] }
+  ],
   "observability": { "enabled": true }
 }

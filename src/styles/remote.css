@@ -274,3 +274,22 @@ body.action.over .pad-msg { display: grid; }
 .pad-msg b { font: 400 clamp(26px, 9vh, 44px) 'Share Tech Mono', monospace; letter-spacing: 0.12em; text-transform: uppercase; }
 .pad-msg span { font: 13px 'Share Tech Mono', monospace; color: var(--amber); }
 .pad-msg em { margin-top: 8px; font: 700 11px Inter, sans-serif; font-style: normal; letter-spacing: 0.2em; text-transform: uppercase; color: #dfe4e8; animation: blink 1.2s steps(2) infinite; }
+
+/* ---------------------------------------------------------------- arena remote */
+body.arena .lcd-row.armour.only-action { display: flex !important; }
+body.arena.over .pad-msg { display: grid; cursor: default; }
+body.arena .pad-msg em { animation: none; }
+.seg.locked { opacity: 0.4; pointer-events: none; }
+.action.gone { display: none; }
+
+/* ---------------------------------------------------------------- phone code entry */
+.join { position: fixed; inset: 0; z-index: 30; display: none; place-content: center; justify-items: center; gap: 14px; padding: 24px;
+  grid-template-columns: auto;
+  background: #16191d; color: #dfe4e8; text-align: center; }
+body.asking .join { display: grid; }
+.join .label { grid-column: auto; }
+.join p { margin: 0; font: 500 14px Inter, sans-serif; color: #aeb6bd; }
+.join input { width: 220px; padding: 12px 14px; border-radius: 10px; border: 1px solid #3a434b; background: #0e1114; color: var(--amber);
+  font: 400 30px 'Share Tech Mono', monospace; letter-spacing: 0.3em; text-align: center; text-transform: uppercase; outline: none; }
+.join input:focus { border-color: var(--amber); }
+.join small { min-height: 1.2em; font: 12px Inter, sans-serif; color: #ff8a6a; }

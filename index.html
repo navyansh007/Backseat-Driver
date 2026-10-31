@@ -31,11 +31,36 @@
       <div class="title-left">
         <h1>backseat <b>driver</b></h1>
         <p class="tag">a remote-controlled drive through a multi-storey car park.<br />your phone is the remote.</p>
+        <label class="driver" id="driver">
+          <span>driver</span>
+          <input id="driver-name" maxlength="16" placeholder="your name" autocomplete="nickname" spellcheck="false" />
+        </label>
         <div class="modes" id="modes" role="radiogroup" aria-label="Game mode">
           <button class="mode" data-mode="casual" role="radio"><b>casual</b><small>cruise, jump, wreck the car park</small></button>
           <button class="mode" data-mode="action" role="radio"><b>action</b><small>survive waves of black saloons</small></button>
+          <button class="mode" data-mode="arena" role="radio"><b>arena</b><small>online · wreck other players</small></button>
         </div>
-        <ol class="steps">
+        <div class="arena-panel for-arena">
+          <div class="ar-join" id="ar-join">
+            <button class="ghost solid" id="ar-create">create an arena</button>
+            <div class="ar-code">
+              <input id="ar-code" maxlength="12" placeholder="arena code" autocomplete="off" spellcheck="false" />
+              <button class="ghost" id="ar-enter">join</button>
+            </div>
+            <p class="ar-note" id="ar-note">pick your car below; it stays yours for the whole match</p>
+          </div>
+          <div class="ar-lobby gone" id="ar-lobby">
+            <div class="ar-room"><small>arena</small><b id="ar-room">—</b><button class="ghost small" id="ar-copy">copy invite link</button></div>
+            <ol class="ar-players" id="ar-players"></ol>
+            <div class="ar-host" id="ar-host">
+              <div class="ar-min" id="ar-minutes" role="radiogroup" aria-label="Match length"></div>
+              <button class="ghost solid" id="ar-start">start match</button>
+            </div>
+            <p class="ar-note" id="ar-wait"></p>
+            <button class="ghost small" id="ar-leave">leave arena</button>
+          </div>
+        </div>
+        <ol class="steps not-arena">
           <li><span>1</span>scan the code with your phone's camera</li>
           <li><span>2</span>drag your thumb on the touchpad to drive</li>
           <li class="for-casual"><span>3</span>left thumb: guns &amp; missiles</li>
@@ -43,10 +68,10 @@
           <li class="for-action"><span>3</span>left thumb: guns, missiles &amp; five traps</li>
           <li class="for-action"><span>4</span>wreck every wave before they wreck you</li>
         </ol>
-        <button id="kb-start" class="ghost">or drive with the keyboard <kbd>enter</kbd></button>
+        <button id="kb-start" class="ghost not-arena">or drive with the keyboard <kbd>enter</kbd></button>
       </div>
       <div class="garage" id="garage" aria-label="Choose your car"></div>
-      <div class="qr-card" id="qr-card">
+      <div class="qr-card not-arena" id="qr-card">
         <div class="qr-head">
           <span class="dot" id="qr-dot"></span>
           <span id="qr-status">waiting for phone</span>
@@ -94,6 +119,16 @@
         <div class="trap-tray" id="a-traps"></div>
         <div class="threats" id="a-threats"></div>
       </div>
+      <div id="arena-hud" class="arena-hud for-arena">
+        <div class="armour">
+          <span id="ar-place">—</span>
+          <div class="bar"><i id="ar-hp"></i><em id="ar-hp-text">100%</em></div>
+          <span id="ar-pts">0 pts</span>
+        </div>
+        <div class="ar-clock" id="ar-clock">0:00</div>
+        <ol class="ar-board" id="ar-board"></ol>
+        <div class="feed" id="ar-feed"></div>
+      </div>
       <div class="sound-note" id="sound-note">click anywhere for sound</div>
     </div>
 
@@ -104,6 +139,32 @@
       <h2>wrecked</h2>
       <p id="a-over-stats"></p>
       <button class="ghost" id="a-restart">go again <kbd>enter</kbd></button>
+    </div>
+
+    <div class="vignette for-arena" id="ar-vignette"></div>
+    <div class="banner" id="ar-banner"><small id="ar-banner-sub"></small><h2 id="ar-banner-title"></h2><p id="ar-banner-note"></p></div>
+    <div class="wrecked ar-results" id="ar-results">
+      <small>match over</small>
+      <h2 id="ar-results-title"></h2>
+      <table id="ar-results-table"></table>
+      <div class="ar-results-actions">
+        <button class="ghost" id="ar-again">back to the lobby</button>
+        <span id="ar-results-wait">waiting for the host…</span>
+        <button class="ghost" id="ar-quit">leave arena</button>
+      </div>
+    </div>
+    <div class="pair" id="pair">
+      <div class="qr-card">
+        <div class="qr-head"><span class="dot" id="pair-dot"></span><span id="pair-status">pair your phone · optional</span></div>
+        <canvas class="pair-qr" id="pair-qr"></canvas>
+        <div class="room">phone code <b id="pair-code">—</b></div>
+        <a class="url" id="pair-url" target="_blank" rel="noopener"></a>
+        <p class="lan-note">open the link on your phone and enter the code (or scan it). the keyboard keeps working either way.</p>
+        <div class="pair-actions">
+          <button class="ghost" id="pair-close">keep driving <kbd>esc</kbd></button>
+          <button class="ghost" id="pair-leave">leave arena</button>
+        </div>
+      </div>
     </div>
 
     <div id="letterbox" class="letterbox"><i></i><i></i></div>

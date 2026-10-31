@@ -29,7 +29,12 @@ const scope = $<HTMLCanvasElement>('scope');
 const padMsg = $<HTMLButtonElement>('pad-msg');
 const padMsgStats = $<HTMLElement>('pad-msg-stats');
 
-const room = new URLSearchParams(location.search).get('room');
+// the QR carries the phone code; opened without one, the remote asks for it
+let room = cleanCode(new URLSearchParams(location.search).get('room'));
+function cleanCode(raw: string | null) {
+  const code = (raw ?? '').trim().toUpperCase();
+  return /^[A-Z0-9]{4,12}$/.test(code) ? code : null;
+}
 
 // the QR says which remote to show; after that the game's own mode wins (it can change live)
 let mode: GameMode = new URLSearchParams(location.search).get('mode') === 'action' ? 'action' : 'casual';
@@ -99,10 +104,12 @@ function onHostMsg(msg: HostToRemote | RelayMsg) {
     if (msg.heat !== undefined) heatEl.style.width = `${Math.round(msg.heat * 100)}%`;
     heatEl.parentElement!.classList.toggle('hot', !!msg.hot);
     lockEl.classList.toggle('on', !!msg.lock);
-    if (msg.hp !== undefined) showAction(msg);
+    if (msg.place !== undefined) showArena(msg);
+    else if (msg.hp !== undefined) showAction(msg);
   } else if (msg.t === 'cfg') {
     panel.update(msg);
     showCam();
+    setArena(!!msg.arena);
     if (msg.mode !== mode) setMode(msg.mode);
   } else if (msg.t === 'hit') {
     buzz(Math.min(140, 20 + msg.power * 110));
@@ -116,7 +123,8 @@ function onHostMsg(msg: HostToRemote | RelayMsg) {
 
 function connect() {
   if (!room) {
-    setStatus('bad', 'scan the qr');
+    setStatus('bad', 'enter the code');
+    askForCode();
     return;
   }
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
@@ -335,6 +343,63 @@ padMsg.addEventListener('pointerdown', (e) => {
   sendCommand({ c: 'restart' });
   e.preventDefault();
 });
+
+// ---------------------------------------------------------------- arena
+const padMsgTitle = padMsg.querySelector('small')!;
+const padMsgBig = padMsg.querySelector('b')!;
+const padMsgHint = padMsg.querySelector('em')!;
+function setArena(on: boolean) {
+  if (document.body.classList.contains('arena') === on) return;
+  document.body.classList.toggle('arena', on);
+  if (!on) {
+    document.body.classList.remove('over');
+    padMsgTitle.textContent = 'game over';
+    padMsgBig.textContent = 'wrecked';
+    padMsgHint.textContent = 'tap to go again';
+  }
+}
+
+/** In an arena match: armour, place, points; the pad shows the respawn countdown once wrecked. */
+function showArena(msg: TelemetryMsg) {
+  const hp = msg.hp ?? 1;
+  hpEl.style.width = `${Math.round(hp * 100)}%`;
+  hpEl.parentElement!.classList.toggle('low', hp < 0.3);
+  const left = msg.left ?? 0;
+  waveEl.textContent = `#${msg.place}/${msg.of} ${msg.pts ?? 0} ${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}`;
+  const wrecked = msg.back !== undefined;
+  document.body.classList.toggle('over', wrecked);
+  if (wrecked) {
+    padMsgTitle.textContent = 'wrecked';
+    padMsgBig.textContent = msg.back! > 0 ? String(msg.back) : '…';
+    padMsgStats.textContent = `${msg.pts ?? 0} pts · #${msg.place} of ${msg.of}`;
+    padMsgHint.textContent = 'back in the car park soon';
+  }
+}
+
+// ---------------------------------------------------------------- phone code
+function askForCode() {
+  const form = $<HTMLFormElement>('join');
+  const input = $<HTMLInputElement>('join-code');
+  const note = $<HTMLElement>('join-note');
+  document.body.classList.add('asking');
+  input.focus();
+  form.onsubmit = (e) => {
+    e.preventDefault();
+    const code = cleanCode(input.value);
+    if (!code) {
+      note.textContent = 'that code doesn\'t look right: 5 letters and numbers';
+      buzz(40);
+      return;
+    }
+    room = code;
+    const url = new URL(location.href);
+    url.searchParams.set('room', code);
+    history.replaceState(null, '', url);
+    document.body.classList.remove('asking');
+    input.blur();
+    connect();
+  };
+}
 
 let radar: number[] = [];
 function showAction(msg: TelemetryMsg) {

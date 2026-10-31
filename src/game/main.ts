@@ -9,7 +9,7 @@ import { ChaseCamera } from './camera';
 import { SkidMarks, Smoke } from './effects';
 import { CarAudio } from './audio';
 import { RemoteLink } from './net';
-import { Controls } from './input';
+import { Controls, isTyping } from './input';
 import { MusicDirector } from './music';
 import { CombatFx } from './combat/fx';
 import { Destruction } from './combat/destruction';
@@ -22,6 +22,8 @@ import { WreckShells } from './combat/wreckShells';
 import { carDef } from './cars/roster';
 import { CAR_IDS, DEFAULT_CAR } from '../shared/cars';
 import { CarPicker } from './cars/picker';
+import { ArenaMode } from './arena/arena';
+import { profile } from './profile';
 import {
   ASSIST_NAMES, CAM_VIEWS, GAME_MODES, QUALITY_LEVELS, TRAP_KINDS,
   type CommandMsg, type GameMode, type RendererChoice, type Settings, type SettingsMsg,
@@ -36,7 +38,11 @@ const ui = {
   lock: $('lock'), heat: $('heat-fill'), heatBox: $('heat'), pips: $('pips'),
   letterbox: $('letterbox'), card: $('stunt-card'), cardTitle: $('stunt-title'), cardTags: $('stunt-tags'),
   cardStats: $('stunt-stats'), cardPoints: $('stunt-points'), modes: $('modes'), qrMode: $('qr-mode'), restart: $('a-restart'),
-  garage: $('garage'),
+  garage: $('garage'), driver: $('driver'), driverName: $<HTMLInputElement>('driver-name'),
+  arCreate: $<HTMLButtonElement>('ar-create'), arEnter: $<HTMLButtonElement>('ar-enter'), arCopy: $('ar-copy'), arStart: $('ar-start'),
+  arLeave: $('ar-leave'), arAgain: $('ar-again'), arQuit: $('ar-quit'),
+  pair: $('pair'), pairQr: $<HTMLCanvasElement>('pair-qr'), pairCode: $('pair-code'), pairUrl: $<HTMLAnchorElement>('pair-url'),
+  pairDot: $('pair-dot'), pairStatus: $('pair-status'), pairClose: $('pair-close'), pairLeave: $('pair-leave'),
 };
 
 let toastTimer = 0;
@@ -148,7 +154,7 @@ async function boot() {
     },
     onTrafficDestroyed: (body) => life.trafficDestroyed(body),
     onTrafficRespawn: (body) => life.trafficRespawn(body),
-    onPlayerBlast: (damage) => action.onPlayerBlast(damage),
+    onPlayerBlast: (damage) => { if (!arena.inMatch) action.onPlayerBlast(damage); },
   }, wreck, shells);
   // driving assist level, remembered per browser
   const ASSIST_VALUES = [0, 0.4, 0.7, 1];
@@ -196,6 +202,10 @@ async function boot() {
     gunshot: () => audio.gunshot(),
     launch: () => audio.launch(),
     hit: (p) => action.onGunHit(p),
+    // in the arena, the others see our fire
+    shot: (a, b, hit) => arena.onShot(a, b, hit),
+    missile: (p, v, target) => arena.onMissile(p, v, target),
+    boom: (p) => arena.onBoom(p),
   });
   car.onModel = () => weapons.fit();
 
@@ -216,6 +226,29 @@ async function boot() {
   });
   // pursuers draw their own wheels, so their shells come without
   for (const { set, spec } of action.fleet.models()) shells.register(set, spec, false, 6);
+
+  // online arena: other players' cars, the match, its hud
+  const arena = new ArenaMode(scene, phys, car, fx, wreck, audio, destruction, {
+    join: $('ar-join'), lobby: $('ar-lobby'), code: $<HTMLInputElement>('ar-code'), note: $('ar-note'), room: $('ar-room'),
+    players: $('ar-players'), host: $('ar-host'), minutes: $('ar-minutes'), wait: $('ar-wait'),
+    clock: $('ar-clock'), hp: $('ar-hp'), hpText: $('ar-hp-text'), place: $('ar-place'), points: $('ar-pts'), board: $('ar-board'),
+    feed: $('ar-feed'), banner: $('ar-banner'), bannerSub: $('ar-banner-sub'), bannerTitle: $('ar-banner-title'), bannerNote: $('ar-banner-note'),
+    vignette: $('ar-vignette'), results: $('ar-results'), resultsTitle: $('ar-results-title'), resultsTable: $('ar-results-table'),
+    resultsHost: $('ar-again'), resultsWait: $('ar-results-wait'),
+  }, {
+    enter: () => enterArena(),
+    exit: () => exitArena(),
+    hurt(power) {
+      cam.bump(power * 0.7);
+      link.send({ t: 'hit', power });
+    },
+    wrecked() {
+      stunts.cancel();
+      pushSettings();
+    },
+    toast: (text, ms) => toast(text, ms),
+    compile: () => void renderer.compileAsync(scene, cam.camera),
+  });
 
   // stunts: slow-motion cinematics with their own score
   const glass = lot.props.entries.filter((e) => e.kind === 'glass').map((e) => e.body);
@@ -245,8 +278,13 @@ async function boot() {
   // the chosen chase view, kept while the title screen orbits the car
   let view: Settings['cam'] = 'chase';
   let hintsOn = true;
+  // the arena is picked on the title screen (it isn't a solo mode: it has its own lobby and match)
+  let arenaPicked = false;
+  let stuntsBefore = true;
   const start = () => {
-    if (playing) return;
+    // the arena starts when its host starts the match
+    if (playing || arenaPicked) return;
+    (document.activeElement as HTMLElement | null)?.blur?.();
     playing = true;
     ui.title.classList.add('hidden');
     ui.hud.classList.remove('hidden');
@@ -260,6 +298,11 @@ async function boot() {
     pushSettings();
   };
   const showMenu = () => {
+    // mid-match, the menu is the phone pairing panel: leaving the arena is a button on it
+    if (arena.inMatch) {
+      togglePair();
+      return;
+    }
     stunts.cancel();
     if (action.running) action.end();
     playing = false;
@@ -288,6 +331,8 @@ async function boot() {
     ui.chip.title = ok ? `${link.direct} of ${n} on a direct link · show pairing code (Q)` : 'Show pairing code (Q)';
     ui.qrDot.classList.toggle('ok', ok);
     ui.qrStatus.textContent = ok ? 'phone linked · touch the pad to drive' : 'waiting for phone';
+    ui.pairDot.classList.toggle('ok', ok);
+    ui.pairStatus.textContent = ok ? 'phone linked · touch the pad to drive' : 'pair your phone · optional';
   };
   let prevPhones = 0;
   link.onPeers = (n) => {
@@ -301,18 +346,22 @@ async function boot() {
   // ------------------------------------------------------------ mode
   // action mode clears the traffic off the perimeter road and sends in the pursuers
   const applyMode = () => {
-    const act = mode === 'action';
+    const act = mode === 'action' && !arenaPicked;
     document.body.classList.toggle('mode-action', act);
-    for (const b of life.trafficBodies) destruction.setSuspended(b, act);
-    life.setTraffic(!act);
+    document.body.classList.toggle('mode-arena', arenaPicked);
+    // no traffic in action mode or the arena: the perimeter road is clear
+    const clear = act || arenaPicked;
+    for (const b of life.trafficBodies) destruction.setSuspended(b, clear);
+    life.setTraffic(!clear);
     for (const el of Array.from(ui.modes.children) as HTMLElement[]) {
-      const on = el.dataset.mode === mode;
+      const on = arenaPicked ? el.dataset.mode === 'arena' : el.dataset.mode === mode;
       el.classList.toggle('on', on);
       el.setAttribute('aria-checked', String(on));
     }
     ui.qrMode.textContent = act ? 'action remote · with traps' : 'casual remote';
   };
   const setMode = (m: GameMode) => {
+    if (arenaPicked) pickArena(false);
     if (m === mode) return;
     const wasPlaying = playing;
     if (action.running) action.end();
@@ -329,7 +378,8 @@ async function boot() {
   applyMode();
   for (const el of Array.from(ui.modes.children) as HTMLElement[]) {
     el.addEventListener('click', () => {
-      setMode(el.dataset.mode === 'action' ? 'action' : 'casual');
+      if (el.dataset.mode === 'arena') pickArena(true);
+      else setMode(el.dataset.mode === 'action' ? 'action' : 'casual');
       pushSettings();
     });
   }
@@ -349,7 +399,13 @@ async function boot() {
   const picker = new CarPicker(ui.garage, carId, (id) => { setCar(id); pushSettings(); });
   const setCar = (id: string) => {
     if (id === carId || !CAR_IDS.includes(id)) return;
+    if (arena.inMatch) {
+      toast('your car is locked until the match ends', 1800);
+      picker.show(carId);
+      return;
+    }
     carId = id;
+    arena.setCar(id);
     storageSet('tnd-car', id);
     stunts.cancel();
     car.setModel(carDef(id));
@@ -359,6 +415,101 @@ async function boot() {
     picker.show(id);
     if (playing) toast(`${carDef(id).info.maker} ${carDef(id).info.model}`, 1600);
   };
+
+  // ------------------------------------------------------------ arena (title screen, entering and leaving)
+  ui.driverName.value = profile.name ?? '';
+  const checkName = () => {
+    const ok = !!profile.setName(ui.driverName.value);
+    ui.driver.classList.toggle('bad', !ok && ui.driverName.value.trim() !== '');
+    return ok;
+  };
+  ui.driverName.addEventListener('input', checkName);
+  ui.driverName.addEventListener('keydown', (e) => { if (e.key === 'Enter') ui.driverName.blur(); });
+  /** The driver name, or null after asking for one. */
+  const needName = () => {
+    if (checkName()) return profile.name;
+    toast('pick a driver name first: 2–16 letters or numbers', 2600);
+    ui.driverName.focus();
+    return null;
+  };
+  const codeInput = $<HTMLInputElement>('ar-code');
+  const joinByCode = () => {
+    const code = codeInput.value.trim().toUpperCase();
+    if (!/^[A-Z0-9]{4,12}$/.test(code)) {
+      toast('enter the arena code you were given', 2000);
+      codeInput.focus();
+      return;
+    }
+    const name = needName();
+    if (name) arena.join(code, name, carId);
+  };
+  ui.arCreate.addEventListener('click', () => {
+    const name = needName();
+    if (name) arena.join(null, name, carId);
+  });
+  ui.arEnter.addEventListener('click', joinByCode);
+  codeInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') joinByCode(); });
+  ui.arCopy.addEventListener('click', () => {
+    const url = arena.shareLink();
+    navigator.clipboard?.writeText(url).then(() => toast('invite link copied', 1600), () => toast(url, 6000));
+  });
+  ui.arStart.addEventListener('click', () => arena.start());
+  ui.arAgain.addEventListener('click', () => arena.backToLobby());
+  for (const b of [ui.arLeave, ui.arQuit, ui.pairLeave]) b.addEventListener('click', () => arena.leave());
+  ui.pairClose.addEventListener('click', () => closePair());
+
+  const pickArena = (on: boolean) => {
+    if (on === arenaPicked) return;
+    if (!on) arena.leave(false);
+    arenaPicked = on;
+    if (on && action.running) action.end();
+    stunts.cancel();
+    applyMode();
+  };
+  // the match has started (or we joined one): drive
+  const enterArena = () => {
+    closePair();
+    stuntsBefore = stunts.enabled;
+    setStunts(false); // slow motion can't work when others share the clock
+    (document.activeElement as HTMLElement | null)?.blur?.();
+    playing = true;
+    ui.title.classList.add('hidden');
+    ui.hud.classList.remove('hidden');
+    ui.brand.classList.add('hidden');
+    cam.mode = view;
+    cam.snap(car.root);
+    pushSettings();
+  };
+  // back to the lobby after a match, or out of the arena altogether
+  const exitArena = () => {
+    closePair();
+    setStunts(stuntsBefore);
+    playing = false;
+    ui.title.classList.remove('hidden');
+    ui.hud.classList.add('hidden');
+    ui.brand.classList.remove('hidden');
+    cam.mode = 'orbit';
+    car.reset(lot.spawn.x, lot.spawn.y, lot.spawn.z, lot.spawn.yaw);
+    applyMode();
+    pushSettings();
+  };
+  // mid-match phone pairing: optional, with the keyboard working all along
+  const openPair = () => {
+    void link.drawQR(ui.pairQr, 220, mode).then((url) => {
+      ui.pairUrl.textContent = url.replace(/^https?:\/\//, '').replace(/\?.*$/, '');
+      ui.pairUrl.href = url;
+    });
+    ui.pairCode.textContent = link.room;
+    ui.pair.classList.add('show');
+  };
+  const closePair = () => ui.pair.classList.remove('show');
+  const togglePair = () => (ui.pair.classList.contains('show') ? closePair() : openPair());
+  // an invite link (?arena=CODE) opens straight onto the arena with its code filled in
+  const invited = (new URLSearchParams(location.search).get('arena') ?? '').toUpperCase();
+  if (/^[A-Z0-9]{4,12}$/.test(invited)) {
+    codeInput.value = invited;
+    pickArena(true);
+  }
 
   // ------------------------------------------------------------ settings (keyboard and phone)
   const setView = (v: Settings['cam']) => {
@@ -377,12 +528,18 @@ async function boot() {
     t: 'cfg', playing, backend, audio: audio.unlocked, mode, car: carId,
     cam: view, assist: assistIdx, stunts: stunts.enabled, sound: !audio.isMuted, volume: +audio.masterVolume.toFixed(2),
     music: music.isEnabled, musicVolume: +music.musicVolume.toFixed(2), hints: hintsOn, quality, renderer: preferred,
+    arena: arena.inMatch, locked: arena.inMatch ? ['mode', 'car'] : undefined,
   });
   function pushSettings() {
     link.send(settingsMsg());
   }
 
   const onCommand = (cmd: CommandMsg) => {
+    // mid-match the phone can drive, fire and change its own settings, but not leave or teleport
+    if (arena.inMatch && (cmd.c === 'start' || cmd.c === 'menu' || cmd.c === 'respawn' || cmd.c === 'restart')) {
+      pushSettings();
+      return;
+    }
     switch (cmd.c) {
       case 'start': start(); break;
       case 'menu': if (playing) showMenu(); break;
@@ -401,11 +558,11 @@ async function boot() {
   const index = (v: unknown, n: number) => (typeof v === 'number' && Number.isInteger(v) && v >= 0 && v < n ? v : null);
   function applySetting({ k, v }: Extract<CommandMsg, { c: 'set' }>) {
     switch (k) {
-      case 'mode': if (GAME_MODES.includes(v)) setMode(v); break;
+      case 'mode': if (GAME_MODES.includes(v) && !arena.inMatch) setMode(v); break;
       case 'car': if (typeof v === 'string') setCar(v); break;
       case 'cam': if (CAM_VIEWS.includes(v)) setView(v); break;
       case 'assist': { const i = index(v, ASSIST_VALUES.length); if (i !== null) setAssist(i); break; }
-      case 'stunts': if (typeof v === 'boolean') setStunts(v); break;
+      case 'stunts': if (typeof v === 'boolean' && !arena.inMatch) setStunts(v); break;
       case 'sound': if (typeof v === 'boolean') audio.setMuted(!v); break;
       case 'volume': {
         const x = unit(v);
@@ -443,6 +600,7 @@ async function boot() {
   }
 
   addEventListener('keydown', (e) => {
+    if (isTyping(e)) return;
     const trap = /^Digit([1-5])$/.exec(e.code);
     if (trap) {
       dropTrap(TRAP_KINDS[Number(trap[1]) - 1]);
@@ -457,6 +615,7 @@ async function boot() {
       case 'KeyB': toast(music.toggle() ? 'music on' : 'music off', 1200); break;
       case 'KeyV': cycleAssist(); break;
       case 'KeyK':
+        if (arena.inMatch) break;
         setStunts(!stunts.enabled);
         toast(stunts.enabled ? 'stunt cam on' : 'stunt cam off', 1400);
         break;
@@ -478,7 +637,9 @@ async function boot() {
   const resetCar = (toSpawn = false) => {
     stunts.cancel();
     const p = car.body.translation();
-    if (toSpawn) car.reset(lot.spawn.x, lot.spawn.y, lot.spawn.z, lot.spawn.yaw);
+    // in the arena, "back to the start" means a fresh spawn point away from the others
+    const s = arena.inMatch ? arena.spawnPoint() : lot.spawn;
+    if (toSpawn) car.reset(s.x, s.y, s.z, s.yaw);
     else car.reset(p.x, Math.max(0, p.y - 0.6), p.z, car.sim.yaw());
     cam.snap(car.root);
   };
@@ -512,7 +673,7 @@ async function boot() {
   function tick(dt: number) {
     input = controls.read(dt);
     if (!playing && controls.source === 'phone' && link.state.active) start();
-    if (!playing || action.over) input = { steer: 0, throttle: 0, handbrake: true };
+    if (!playing || action.over || arena.frozen) input = { steer: 0, throttle: 0, handbrake: true };
 
     // game time runs slower during a stunt; the camera and audio keep real time
     const gdt = dt * stunts.timeScale;
@@ -522,6 +683,7 @@ async function boot() {
       car.drive(STEP, input);
       lot.breakables.preStep(car.body, car.sim.chassisColliders[0]);
       action.preStep(STEP, lot.breakables);
+      arena.preStep();
       phys.step();
       car.capture();
       action.postStep();
@@ -550,7 +712,8 @@ async function boot() {
     action.render(acc / STEP);
     lot.update(gdt, car.position);
     life.update(gdt, car.position);
-    weapons.update(gdt, controls.weapons, playing && !action.over);
+    weapons.update(gdt, controls.weapons, playing && !action.over && !arena.frozen);
+    arena.update(dt);
 
     // ---------------------------------------------------- tyres: skids & smoke
     const speed = Math.abs(car.sim.forwardSpeed());
@@ -590,7 +753,7 @@ async function boot() {
     }
 
     // ---------------------------------------------------- recovery
-    if (car.sim.upright() < 0.35 && !stunts.active && !action.over) {
+    if (car.sim.upright() < 0.35 && !stunts.active && !action.over && !arena.wrecked) {
       flippedFor += gdt;
       if (flippedFor > 2.2) {
         resetCar();
@@ -610,7 +773,7 @@ async function boot() {
       teleT = 0;
       link.send({
         t: 'tele', kmh, gear, msl: weapons.missiles, heat: +weapons.heat.toFixed(2), hot: weapons.overheated, lock: !!weapons.lock,
-        ...(action.running ? action.telemetry() : {}),
+        ...(action.running ? action.telemetry() : arena.inMatch ? arena.telemetry() : {}),
       });
     }
     // settings again once a second: the direct link may drop a packet, and new phones need them
@@ -668,7 +831,7 @@ async function boot() {
   requestAnimationFrame(frame);
 
   // debug handle for development
-  (window as unknown as { game: unknown }).game = { car, cam, phys, link, renderer, scene, start, weapons, destruction, controls, tick, music, stunts, lot, action, setMode, setCar };
+  (window as unknown as { game: unknown }).game = { car, cam, phys, link, renderer, scene, start, weapons, destruction, controls, tick, music, stunts, lot, action, setMode, setCar, arena };
 }
 
 boot().catch((err) => {
