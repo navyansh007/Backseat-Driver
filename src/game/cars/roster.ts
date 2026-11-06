@@ -1,5 +1,6 @@
 import { SPECS, type CarSpec } from '../models/carModel';
 import type { Tuning } from '../vehiclePhysics';
+import type { VoiceName } from '../audio';
 import { CARS, carInfo, type CarInfo } from '../../shared/cars';
 
 type V3 = [number, number, number];
@@ -14,12 +15,18 @@ export interface CarDef {
   paint: number;
   /** wheel rim colour; chrome when left out */
   rim?: number;
+  /** brake caliper colour; red when left out */
+  caliper?: number;
   /** dark, opaque glass and no cabin behind it */
   blackout?: boolean;
   /** solid gloss paint instead of metallic */
   solid?: boolean;
   /** cabin trim colour, when the glass shows it */
   interior?: number;
+  /** engine sound (default: the V12) */
+  voice?: VoiceName;
+  /** a heavy car: what it does to cars it rams, outside the arena, and how little of a ram it feels */
+  heavy?: { /** health knocked off per 1000 N·s of impact */ ram: number; /** share of ram damage it takes */ armour: number };
   /** handling, on top of the shared TUNING */
   handling: Partial<Tuning>;
   /** collision boxes: half extents and centre, for the lower body and the cabin */
@@ -147,6 +154,59 @@ const DEFS: Record<string, Omit<CarDef, 'info'>> = {
     },
     // guns slide out of the valence under the front bumper; the launcher rises up through the bonnet scoop
     mounts: { headlamp: [0.65, 0.6, 2.3], gun: [0.4, 0.38, 2.12], launcher: [0.75, 1.35] },
+  },
+  // A four-tonne electric off-roader: slab sides, a blunt nose under a lit nameplate bar, black roof and
+  // lower body, angular arch flares and a spare on the tailgate. Proportions measured from a side photo
+  // of the real SUV (3.22 m between the axles, 1.95 m tall, 2.2 m wide across the flares).
+  hammer: {
+    spec: {
+      name: 'hammer', L: 4.72, W: 2.2, H: 1.95, bottom: 0.68, hoodH: 1.3, beltH: 1.46, trunkH: 1.46,
+      wsBaseZ: 1.03, roofFrontZ: 0.69, roofRearZ: -2.08, rwBaseZ: -2.28,
+      wheelR: 0.445, wheelW: 0.31, frontAxleZ: 1.61, rearAxleZ: -1.61, track: 0.88,
+      rear: 'box', grille: 'none', plate: 'EV·4100', wheels: 'terrain', bumpers: 'none', pillar: 0.33, doors: 4,
+      rig: { name: 'HAMMER', badge: 'H EV', rocker: 0.4, spare: [1.23, -2.47] },
+      loft: {
+        // centre line: a blunt face, a long bonnet rising gently to the cowl, a raked screen, then a long
+        // flat roof and a nearly upright tailgate
+        top: [
+          [2.36, 1.1], [2.35, 1.27], [2.3, 1.31], [2.0, 1.37], [1.6, 1.42], [1.2, 1.46], [1.03, 1.475],
+          [0.86, 1.68], [0.69, 1.885], [0.55, 1.915], [-0.23, 1.95], [-1.2, 1.935], [-2.0, 1.885], [-2.1, 1.84],
+          [-2.28, 1.5], [-2.33, 1.42], [-2.36, 1.3],
+        ],
+        // shoulder: wings level with the bonnet, a long flat line under the glass
+        belt: [
+          [2.36, 1.1], [2.35, 1.25], [2.3, 1.3], [2.0, 1.36], [1.6, 1.41], [1.03, 1.46], [0, 1.47], [-1.2, 1.5],
+          [-2.2, 1.5], [-2.32, 1.42], [-2.36, 1.3],
+        ],
+        // plan: nearly a rectangle, swelling over the wheels and tucked in at the doors
+        width: [[2.36, 0.985], [2.3, 1.015], [2.05, 1.045], [1.61, 1.055], [0.9, 1.03], [0, 1.02], [-0.9, 1.03], [-1.61, 1.055], [-2.05, 1.045], [-2.3, 1.015], [-2.36, 0.985]],
+        // the painted body stops high up: below it everything is black bumper, rocker and flare
+        bottom: [[2.36, 0.93], [2.25, 0.9], [2.1, 0.7], [-2.1, 0.7], [-2.25, 0.9], [-2.36, 0.93]],
+        roofHalf: 0.86,
+        glass: { wsBase: 1.03, roofFront: 0.69, roofRear: -2.08, rwBase: -2.28, sideFront: 0.93, sideRear: -1.98 },
+        arches: [{ z: 1.61, y: 0.66, r: 0.62, top: 1.03, flat: 0.34 }, { z: -1.61, y: 0.66, r: 0.62, top: 1.03, flat: 0.34 }],
+        flank: { sill: 0.97, widest: 0.74, shoulder: 0.985, inset: 0.1, rise: 0.02, box: true },
+        blackRoof: true,
+      },
+    },
+    paint: 0x7c8a7b,
+    solid: true,
+    rim: 0x8d9196,
+    caliper: 0x25272a,
+    blackout: true,
+    voice: 'truck',
+    // a parked car goes at about 50 km/h
+    heavy: { ram: 7.5, armour: 0.4 },
+    handling: {
+      mass: 4100, engineForce: 15000, reverseForce: 11000, topSpeed: 38, brake: 240, coastBrake: 8, maxSuspensionForce: 160000,
+      frictionFront: 2.3, frictionRear: 2.15, frictionRearHandbrake: 0.9, maxSteer: 0.54, highSpeedSteer: 0.13, steerRate: 2.6,
+    },
+    chassis: {
+      body: { half: [1.03, 0.46, 2.48], at: [0, 0.88, -0.05] },
+      cabin: { half: [0.86, 0.25, 1.42], at: [0, 1.67, -0.7] },
+    },
+    // the guns slide out of the bumper intake; the launcher rises up through the middle of the bonnet
+    mounts: { headlamp: [0.8, 1.2, 2.36], gun: [0.38, 0.74, 2.26], launcher: [1.22, 1.45] },
   },
 };
 

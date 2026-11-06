@@ -148,9 +148,10 @@ export class Hedges {
 
     // foliage drag (only on cars that should feel it)
     if (mv.drag && speed > 0.3) {
-      const decel = (DRAG_LIN * speed + DRAG_QUAD * speed * speed) * fill;
-      const dv = Math.min(speed, decel * dt);
       const m = body.mass();
+      // anything past ordinary-car weight ploughs through
+      const decel = (DRAG_LIN * speed + DRAG_QUAD * speed * speed) * fill * Math.min(1, 2000 / m);
+      const dv = Math.min(speed, decel * dt);
       body.applyImpulse({ x: (-lv.x / speed) * dv * m, y: 0, z: (-lv.z / speed) * dv * m }, true);
     }
 

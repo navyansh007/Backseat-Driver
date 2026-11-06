@@ -15,6 +15,8 @@ import { CombatFx } from './combat/fx';
 import { Destruction } from './combat/destruction';
 import { WreckFx } from './combat/wreck';
 import { Weapons } from './combat/weapons';
+import { Ram } from './combat/ram';
+import { clearSpot } from './recovery';
 import { StuntDirector } from './stunts';
 import { useWebGLOutput } from './render/output';
 import { ActionMode } from './action/action';
@@ -169,6 +171,7 @@ async function boot() {
   };
   const cycleAssist = () => setAssist((assistIdx + 1) % ASSIST_VALUES.length);
   // volumes are remembered too; mute and music on/off reset with each visit, as before
+  audio.setVoice(car.def.voice);
   audio.setVolume(storedNumber('tnd-volume', 1, 0, 1));
   music.setVolume(storedNumber('tnd-music-volume', 1, 0, 1));
 
@@ -197,6 +200,10 @@ async function boot() {
       if (mine && entering) link.send({ t: 'hit', power: Math.min(0.35, power * 0.5) });
     },
   };
+
+  // a heavy car goes through things: its assist steers round walls and pillars, not what it can knock down
+  car.sim.avoids = (c) => !car.def.heavy || (!!c.parent()?.isFixed() && !lot.breakables.has(c));
+  const ram = new Ram(phys, car, destruction, () => arena.inMatch, playerHandles);
 
   const weapons = new Weapons(scene, car, phys, fx, destruction, {
     gunshot: () => audio.gunshot(),
@@ -410,6 +417,7 @@ async function boot() {
     storageSet('tnd-car', id);
     stunts.cancel();
     car.setModel(carDef(id));
+    audio.setVoice(car.def.voice);
     // same spot, new car: lift it a touch so the new wheels settle onto the floor
     const p = car.body.translation();
     car.reset(p.x, Math.max(0, p.y - 0.6), p.z, car.sim.yaw());
@@ -644,8 +652,9 @@ async function boot() {
     const p = car.body.translation();
     // in the arena, "back to the start" means a fresh spawn point away from the others
     const s = arena.inMatch ? arena.spawnPoint() : lot.spawn;
-    if (toSpawn) car.reset(s.x, s.y, s.z, s.yaw);
-    else car.reset(p.x, Math.max(0, p.y - 0.6), p.z, car.sim.yaw());
+    // otherwise the nearest clear ground, with room to reverse away
+    const spot = (!toSpawn && clearSpot(phys, car.def, car.body, p.x, p.y, p.z, car.sim.yaw())) || s;
+    car.reset(spot.x, spot.y, spot.z, spot.yaw);
     cam.snap(car.root);
   };
 
@@ -689,7 +698,9 @@ async function boot() {
       lot.breakables.preStep(car.body, car.sim.chassisColliders[0]);
       action.preStep(STEP, lot.breakables);
       arena.preStep();
+      ram.preStep();
       phys.step();
+      ram.postStep();
       car.capture();
       action.postStep();
       stunts.postStep(STEP, playing && !action.over);
@@ -697,6 +708,7 @@ async function boot() {
       steps++;
       phys.events.drainContactForceEvents((ev) => {
         lot.breakables.onContactForce(ev);
+        ram.onContact(ev);
         if (action.onContact(ev, playerHandles)) return; // trading paint with a pursuer
         if (!playerHandles.has(ev.collider1()) && !playerHandles.has(ev.collider2())) return;
         const f = ev.totalForceMagnitude();

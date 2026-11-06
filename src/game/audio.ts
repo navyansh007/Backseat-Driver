@@ -1,6 +1,45 @@
 /** Sound-effect level relative to the music. */
 const SFX_LEVEL = 0.75;
 
+/** What makes one engine sound the way it does. */
+interface Voice {
+  /** rpm at idle, the most it revs, and how far a blip of throttle lifts it */
+  idle: number;
+  limit: number;
+  rev: number;
+  /** gearbox: changes up above `shiftUp`, down when the lower gear would stay under `shiftDown` */
+  shiftUp: number;
+  shiftDown: number;
+  finalDrive: number;
+  /** tyre radius, m */
+  tyre: number;
+  /** how fast the revs follow (a big engine is slow to spin up) */
+  response: number;
+  /** lowpass cut-off: base + per unit of throttle + per rpm */
+  filter: [number, number, number];
+  /** volume: at rest + per unit of throttle */
+  gain: [number, number];
+  /** diesel knock: level of the noise chopped by each firing stroke */
+  knock: number;
+  /** pitch ratio of the second oscillator: further from 1 beats rougher */
+  beat: number;
+  /** a truck's extras: air brakes and a reversing beeper */
+  truck: boolean;
+}
+
+const VOICES = {
+  v12: {
+    idle: 800, limit: 6800, rev: 600, shiftUp: 6000, shiftDown: 3200, finalDrive: 3.15, tyre: 0.345, response: 8,
+    filter: [350, 1300, 0.18], gain: [0.16, 0.2], knock: 0, beat: 1.004, truck: false,
+  },
+  // a big straight-six turbo diesel: low revs, dark, rough and rattling
+  truck: {
+    idle: 620, limit: 2700, rev: 260, shiftUp: 2300, shiftDown: 1250, finalDrive: 3.15, tyre: 0.445, response: 3.5,
+    filter: [260, 620, 0.1], gain: [0.26, 0.2], knock: 0.2, beat: 1.017, truck: true,
+  },
+} satisfies Record<string, Voice>;
+export type VoiceName = keyof typeof VOICES;
+
 /** Procedural car audio with WebAudio: engine, tyres, wind, impacts. */
 export class CarAudio {
   private ctx: AudioContext | null = null;
@@ -10,6 +49,13 @@ export class CarAudio {
   private engSub!: OscillatorNode;
   private engFilter!: BiquadFilterNode;
   private engGain!: GainNode;
+  /** the firing pulse that chops the diesel knock */
+  private knockPulse!: OscillatorNode;
+  private knockGain!: GainNode;
+  private voice: Voice = VOICES.v12;
+  /** rolling, since the air brakes last sighed */
+  private rolling = false;
+  private beepT = 0;
   private screechGain!: GainNode;
   private screechFilter!: BiquadFilterNode;
   private windGain!: GainNode;
@@ -117,6 +163,34 @@ export class CarAudio {
     this.windGain.gain.value = 0;
     windSrc.connect(windFilter).connect(this.windGain).connect(this.sfx);
     windSrc.start();
+
+    // diesel knock: noise in the rattly band, chopped on and off by a pulse at the firing rate
+    const knockSrc = ctx.createBufferSource();
+    knockSrc.buffer = this.noise;
+    knockSrc.loop = true;
+    const knockBand = ctx.createBiquadFilter();
+    knockBand.type = 'bandpass';
+    knockBand.frequency.value = 1500;
+    knockBand.Q.value = 0.9;
+    const chop = ctx.createGain();
+    chop.gain.value = 0.5;
+    this.knockPulse = ctx.createOscillator();
+    this.knockPulse.type = 'square';
+    const depth = ctx.createGain();
+    depth.gain.value = 0.5;
+    this.knockPulse.connect(depth).connect(chop.gain);
+    this.knockGain = ctx.createGain();
+    this.knockGain.gain.value = 0;
+    knockSrc.connect(knockBand).connect(chop).connect(this.knockGain).connect(this.sfx);
+    knockSrc.start();
+    this.knockPulse.start();
+  }
+
+  /** Which engine is heard. */
+  setVoice(name: VoiceName = 'v12') {
+    this.voice = VOICES[name];
+    this.gear = 1;
+    this.rolling = false;
   }
 
   toggleMute() {
@@ -169,27 +243,75 @@ export class CarAudio {
   /** speed m/s (abs), throttle 0..1, slip 0..1 */
   update(dt: number, speed: number, throttle: number, slip: number, reversing: boolean) {
     // simulated automatic gearbox
-    const wheelRpm = (speed / (2 * Math.PI * 0.345)) * 60;
-    const finalDrive = 3.15;
+    const v = this.voice;
+    const wheelRpm = (speed / (2 * Math.PI * v.tyre)) * 60;
     if (reversing) this.gear = 1;
-    let target = 800 + wheelRpm * CarAudio.RATIOS[this.gear] * finalDrive;
-    if (target > 6000 && this.gear < 6) this.gear++;
-    else if (this.gear > 1 && wheelRpm * CarAudio.RATIOS[this.gear - 1] * finalDrive < 3200) this.gear--;
-    target = 800 + wheelRpm * CarAudio.RATIOS[this.gear] * finalDrive + throttle * 600;
-    target = Math.min(target, 6800);
-    this.rpm += (target - this.rpm) * Math.min(1, dt * 8);
+    let target = v.idle + wheelRpm * CarAudio.RATIOS[this.gear] * v.finalDrive;
+    if (target > v.shiftUp && this.gear < 6) this.gear++;
+    else if (this.gear > 1 && wheelRpm * CarAudio.RATIOS[this.gear - 1] * v.finalDrive < v.shiftDown) this.gear--;
+    target = v.idle + wheelRpm * CarAudio.RATIOS[this.gear] * v.finalDrive + throttle * v.rev;
+    target = Math.min(target, v.limit);
+    this.rpm += (target - this.rpm) * Math.min(1, dt * v.response);
     if (!this.ctx) return;
     const t = this.ctx.currentTime;
     // a V12 fires 6 times per crank revolution
     const f = (this.rpm / 60) * 3;
     this.engA.frequency.setTargetAtTime(f, t, 0.03);
-    this.engB.frequency.setTargetAtTime(f * 1.004, t, 0.03);
+    this.engB.frequency.setTargetAtTime(f * v.beat, t, 0.03);
     this.engSub.frequency.setTargetAtTime(f / 2, t, 0.03);
-    this.engFilter.frequency.setTargetAtTime(350 + throttle * 1300 + this.rpm * 0.18, t, 0.05);
-    this.engGain.gain.setTargetAtTime(0.16 + throttle * 0.2, t, 0.05);
+    this.engFilter.frequency.setTargetAtTime(v.filter[0] + throttle * v.filter[1] + this.rpm * v.filter[2], t, 0.05);
+    this.engGain.gain.setTargetAtTime(v.gain[0] + throttle * v.gain[1], t, 0.05);
+    this.knockPulse.frequency.setTargetAtTime(f, t, 0.03);
+    this.knockGain.gain.setTargetAtTime(v.knock * (0.45 + 0.55 * throttle), t, 0.05);
     this.screechGain.gain.setTargetAtTime(Math.min(0.32, slip * 0.32), t, 0.04);
     this.screechFilter.frequency.setTargetAtTime(1300 + slip * 500, t, 0.1);
     this.windGain.gain.setTargetAtTime(Math.min(0.25, (speed / 35) ** 2 * 0.25), t, 0.2);
+    if (!v.truck) return;
+    // the air brakes sigh as it comes to a stop
+    if (speed > 5) this.rolling = true;
+    else if (speed < 1 && this.rolling) {
+      this.rolling = false;
+      this.airBrake();
+    }
+    this.beepT -= dt;
+    if (!reversing) this.beepT = 0;
+    else if (this.beepT <= 0) {
+      this.beepT = 0.9;
+      this.reverseBeep();
+    }
+  }
+
+  private airBrake() {
+    const ctx = this.ctx!;
+    const t = ctx.currentTime;
+    const src = ctx.createBufferSource();
+    src.buffer = this.noise;
+    const hp = ctx.createBiquadFilter();
+    hp.type = 'highpass';
+    hp.frequency.value = 3200;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.16, t + 0.05);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.8);
+    src.connect(hp).connect(g).connect(this.sfx);
+    src.start(t);
+    src.stop(t + 0.85);
+  }
+
+  private reverseBeep() {
+    const ctx = this.ctx!;
+    const t = ctx.currentTime;
+    const o = ctx.createOscillator();
+    o.type = 'square';
+    o.frequency.value = 1120;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.05, t + 0.01);
+    g.gain.setValueAtTime(0.05, t + 0.4);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.44);
+    o.connect(g).connect(this.sfx);
+    o.start(t);
+    o.stop(t + 0.46);
   }
 
   /** Leaves and twigs scraping along the bodywork when driving through a hedge. */

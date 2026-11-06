@@ -21,15 +21,21 @@ export interface LoftShape {
   roofHalf: number;
   /** z where the windscreen starts and ends, the rear glass ends and starts, and the side windows run */
   glass: { wsBase: number; roofFront: number; roofRear: number; rwBase: number; sideFront: number; sideRear: number };
-  /** wheel arches cut out of the sides */
-  arches: { z: number; y: number; r: number }[];
+  /**
+   * Wheel arches cut out of the sides: round (centre height y, radius r), or with `top` a squared-off
+   * trapezoid rising from y at ±r to `top` at ±flat.
+   */
+  arches: { z: number; y: number; r: number; top?: number; flat?: number }[];
+  /** a black roof: everything above the shoulder that isn't glass is trim, not paint */
+  blackRoof?: boolean;
   /**
    * How the flank is drawn, for slab-sided cars: how wide the sill is (0.8 of the flank), how far up
    * the side its widest point sits (0.5 of the way to the shoulder), and how far the shoulder
    * rolls in (0.93); a shoulder near 1 makes a crisp crease. The side glass starts `inset` in from
-   * the flank (0.17) and `rise` above the shoulder (0.05).
+   * the flank (0.17) and `rise` above the shoulder (0.05). `box` is for an upright glasshouse: flat
+   * side glass and roof meeting at a corner, and a screen that runs right down to the cowl.
    */
-  flank?: { sill?: number; widest?: number; shoulder?: number; inset?: number; rise?: number };
+  flank?: { sill?: number; widest?: number; shoulder?: number; inset?: number; rise?: number; box?: boolean };
 }
 
 export interface Loft {
@@ -37,6 +43,7 @@ export interface Loft {
   glass: THREE.BufferGeometry;
   sideGlass: THREE.BufferGeometry;
   chrome: THREE.BufferGeometry;
+  trim: THREE.BufferGeometry;
   /** half width of the body side at height y and position z */
   halfW(y: number, z: number): number;
   /** half width of the glasshouse (or the sail behind the side windows) at height y above the shoulder */
@@ -85,11 +92,14 @@ export function loftBody(L: number, shape: LoftShape): Loft {
   const sill = shape.flank?.sill ?? 0.8, widest = shape.flank?.widest ?? 0.5, shoulder = shape.flank?.shoulder ?? 0.93;
   const inset = shape.flank?.inset ?? 0.17, rise = shape.flank?.rise ?? 0.05;
 
+  const box = !!shape.flank?.box;
+  // how far the glasshouse must stand above the shoulder before there is glass in it
+  const minRise = box ? 0.03 : 0.17;
   // one half-section (x ≥ 0), floor centre → top centre
   const section = (z: number) => {
     const t = top(z), s = belt(z), w = width(z), b = bottom(z);
     // how much glasshouse there is here: none over the bonnet and deck, all of it under the roof
-    const cab = smooth(0.06, 0.3, t - s);
+    const cab = box ? smooth(0, 0.05, t - s) : smooth(0.06, 0.3, t - s);
     const lerp = (a: number, c: number) => a + (c - a) * cab;
     const pts: [number, number][] = [
       [0, b],
@@ -115,12 +125,24 @@ export function loftBody(L: number, shape: LoftShape): Loft {
       }
     }
     out.push(pts[CTRL - 1]);
+    // an upright glasshouse is flat, not a curve through its corners
+    if (box) {
+      for (let c = 5; c < 7; c++) {
+        for (let k = 0; k < SEG; k++) {
+          const a = pts[c], e = pts[c + 1], u = k / SEG, p = out[IDX(c) + k];
+          p[0] += (a[0] + (e[0] - a[0]) * u - p[0]) * cab;
+          p[1] += (a[1] + (e[1] - a[1]) * u - p[1]) * cab;
+        }
+      }
+    }
     // cut the wheel arches: anything low enough inside an arch is pulled up onto its edge
     for (let i = 0; i < IDX(4); i++) {
       for (const a of shape.arches) {
         const dz = z - a.z;
         if (Math.abs(dz) >= a.r) continue;
-        const ya = a.y + Math.sqrt(a.r * a.r - dz * dz);
+        const ya = a.top === undefined
+          ? a.y + Math.sqrt(a.r * a.r - dz * dz)
+          : a.y + (a.top - a.y) * Math.min(1, (a.r - Math.abs(dz)) / (a.r - (a.flat ?? 0)));
         if (out[i][1] < ya) out[i][1] = ya;
       }
     }
@@ -161,21 +183,22 @@ export function loftBody(L: number, shape: LoftShape): Loft {
   const tailC = capCentre(SECTIONS, -0.04);
 
   // faces, sorted into paint, glass and the chrome window line
-  const idx: Record<'paint' | 'glass' | 'sideGlass' | 'chrome', number[]> = { paint: [], glass: [], sideGlass: [], chrome: [] };
+  const idx: Record<'paint' | 'glass' | 'sideGlass' | 'chrome' | 'trim', number[]> = { paint: [], glass: [], sideGlass: [], chrome: [], trim: [] };
   const v = (j: number, i: number) => j * RING + (i % RING);
   for (let j = 0; j < SECTIONS; j++) {
     const zc = (zs[j] + zs[j + 1]) / 2;
     // glass only where the glasshouse really stands above the shoulder, never on the bonnet or deck
     const rise = top(zc) - belt(zc);
-    const glassy = rise > 0.2;
+    const glassy = rise > minRise + 0.03;
     for (let i = 0; i < RING; i++) {
       const h = Math.min(ringHalf[i], ringHalf[(i + 1) % RING]);
       let slot: keyof typeof idx = 'paint';
-      if (h >= IDX(6) && rise > 0.17 && ((zc < g.wsBase && zc > g.roofFront) || (zc < g.roofRear && zc > g.rwBase))) slot = 'glass';
+      if (h >= IDX(6) && rise > minRise && ((zc < g.wsBase && zc > g.roofFront) || (zc < g.roofRear && zc > g.rwBase))) slot = 'glass';
       else if (glassy && zc < g.sideFront && zc > g.sideRear) {
         if (h > IDX(5) && h < IDX(6) - 1) slot = 'sideGlass';
-        else if (h === IDX(5) || h === IDX(6) - 1) slot = 'chrome';
+        else if (h === IDX(5) || h === IDX(6) - 1) slot = shape.blackRoof ? 'trim' : 'chrome';
       }
+      if (shape.blackRoof && slot === 'paint' && h >= IDX(5) && rise > minRise) slot = 'trim';
       const a = v(j, i), b = v(j, i + 1), c = v(j + 1, i), d = v(j + 1, i + 1);
       idx[slot].push(a, c, b, b, c, d);
     }
@@ -188,7 +211,7 @@ export function loftBody(L: number, shape: LoftShape): Loft {
   // smooth normals over the whole shell, so panels of different materials still meet without a crease
   const all = new THREE.BufferGeometry();
   all.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-  all.setIndex([...idx.paint, ...idx.glass, ...idx.sideGlass, ...idx.chrome]);
+  all.setIndex([...idx.paint, ...idx.glass, ...idx.sideGlass, ...idx.chrome, ...idx.trim]);
   all.computeVertexNormals();
   const normals = all.getAttribute('normal');
   const part = (list: number[]) => {
@@ -242,6 +265,7 @@ export function loftBody(L: number, shape: LoftShape): Loft {
     glass: part(idx.glass),
     sideGlass: part(idx.sideGlass),
     chrome: part(idx.chrome),
+    trim: part(idx.trim),
     halfW,
     cabinW,
     topY: top,

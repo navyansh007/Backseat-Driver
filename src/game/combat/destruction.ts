@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { RAPIER, type Physics } from '../physics';
+import { RAPIER, G, groups, type Physics } from '../physics';
 import type { Entry } from '../world/dynamics';
 import type { CombatFx } from './fx';
 import type { WreckFx } from './wreck';
@@ -15,6 +15,11 @@ const CAR_HP = 110;
 /** A burnt-out shell weighs next to nothing: the player's car shoves it aside. */
 const WRECK_MASS = 160;
 const CHARRED = new THREE.Color(0x181614);
+/** How long after a ram the car ignores the shove of blasts (the wreck's own, and any it sets off). */
+const RAM_CLEAR_S = 0.7;
+/** A rammed wreck stays passable this long, and until the car that hit it is this far off. */
+const PASS_S = 1;
+const PASS_M = 7;
 
 interface Destructible extends Entry {
   hp: number;
@@ -32,6 +37,8 @@ interface Destructible extends Entry {
   /** taken out of the world for now (traffic in action mode) */
   suspended?: boolean;
   onDestroyed?: () => void;
+  /** rammed: its collision groups for when the ramming car has gone through, and when that can be */
+  passing?: { groups: number; until: number };
   /** a wreck's original collider masses, extra body mass and which colliders were on */
   weight?: { masses: number[]; enabled: boolean[]; extra: number };
 }
@@ -75,6 +82,8 @@ export class Destruction {
   private burning = new Set<Destructible>();
   private time = 0;
   private scanT = 0;
+  /** blasts don't shove the player's car until then */
+  private ramClearUntil = 0;
   private frustum = new THREE.Frustum();
   private pm = new THREE.Matrix4();
   private sphere = new THREE.Sphere();
@@ -112,6 +121,35 @@ export class Destruction {
       this.list.push(d);
       this.byHandle.set(e.body.handle, d);
     }
+  }
+
+  /** A live car that can be wrecked by ramming it. */
+  isCar(body: RAPIER.RigidBody) {
+    const d = this.byHandle.get(body.handle);
+    return !!d && d.car && !d.dead && !d.suspended;
+  }
+
+  /**
+   * A ram of this strength: if it finishes the car, it blows up now and costs the rammer nothing
+   * (the wreck lets it through, and the blast doesn't shove it). False if the car survives it.
+   */
+  plough(body: RAPIER.RigidBody, amount: number) {
+    const d = this.byHandle.get(body.handle);
+    if (!d || !this.isCar(body) || d.hp > amount) return false;
+    this.ramClearUntil = this.time + RAM_CLEAR_S;
+    this.damage(body, d.hp);
+    if (!this.byHandle.has(body.handle)) return true; // its owner took it away at once
+    const hull = d.body.collider(0);
+    d.passing = { groups: hull.collisionGroups(), until: this.time + PASS_S };
+    hull.setCollisionGroups(groups(G.PROP, 0xffff & ~G.PLAYER));
+    return true;
+  }
+
+  /** The wreck goes back to being something the car can hit. */
+  private endPassing(d: Destructible) {
+    if (!d.passing) return;
+    d.body.collider(0).setCollisionGroups(d.passing.groups);
+    d.passing = undefined;
   }
 
   isTarget(body: RAPIER.RigidBody) {
@@ -160,6 +198,7 @@ export class Destruction {
   remove(body: RAPIER.RigidBody) {
     const d = this.byHandle.get(body.handle);
     if (!d) return;
+    this.endPassing(d);
     this.shells?.detach(d.body);
     this.lighten(d, false);
     this.byHandle.delete(body.handle);
@@ -308,7 +347,7 @@ export class Destruction {
     const pd2 = (pt.x - b.p.x) ** 2 + (pt.y - b.p.y) ** 2 + (pt.z - b.p.z) ** 2;
     if (pd2 < r2) {
       const k = 1 - Math.sqrt(pd2) / b.radius;
-      push(this.player, this.player.mass(), k * 0.45);
+      if (this.time >= this.ramClearUntil) push(this.player, this.player.mass(), k * 0.45);
       this.hooks.onPlayerBlast?.(b.damage * k, b.p);
     }
   }
@@ -322,6 +361,10 @@ export class Destruction {
   update(dt: number, camera: THREE.Camera, playerPos: THREE.Vector3) {
     this.time += dt;
     flickerEmbers(this.time);
+
+    for (const d of this.list) {
+      if (d.passing && this.time >= d.passing.until && this.clearOf(d, playerPos)) this.endPassing(d);
+    }
 
     // delayed (chained) blasts
     if (this.blasts.length) {
@@ -402,7 +445,13 @@ export class Destruction {
     return false;
   }
 
+  private clearOf(d: Destructible, p: THREE.Vector3) {
+    const t = d.body.translation();
+    return Math.hypot(t.x - p.x, t.z - p.z) > PASS_M;
+  }
+
   private respawn(d: Destructible) {
+    this.endPassing(d);
     const wasDead = d.dead;
     if (wasDead && d.car) {
       this.shells?.detach(d.body);

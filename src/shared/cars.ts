@@ -20,17 +20,22 @@ export const CARS: readonly CarInfo[] = [
   {
     id: 'saloon', maker: 'BMV', model: '750 iL', short: '750',
     blurb: 'long-wheelbase executive saloon, sunroof missiles optional',
-    stats: { speed: 3, accel: 3, grip: 3, weight: 5 },
+    stats: { speed: 3, accel: 3, grip: 3, weight: 3 },
   },
   {
     id: 'db10', maker: 'Ashton Martyn', model: 'DB10', short: 'DB10',
     blurb: 'one-off grand tourer: low, wide and very, very fast',
-    stats: { speed: 5, accel: 5, grip: 4, weight: 3 },
+    stats: { speed: 5, accel: 5, grip: 4, weight: 2 },
   },
   {
     id: 'boss', maker: 'Fjord', model: 'Mustanger Boss 429', short: 'BOSS',
     blurb: '1969 fastback with a racing V8 shoehorned in: all torque, not much grip',
     stats: { speed: 4, accel: 5, grip: 2, weight: 4 },
+  },
+  {
+    id: 'hammer', maker: 'GNC', model: 'Hammer EV', short: 'EV',
+    blurb: 'four tonnes of electric off-roader: it goes through things, not round them',
+    stats: { speed: 3, accel: 4, grip: 3, weight: 5 },
   },
 ];
 

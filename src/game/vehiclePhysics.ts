@@ -75,6 +75,8 @@ export class VehicleSim {
   assist = 0.7;
   /** How much the assist changed the steering this step (for UI/debug). */
   assistSteer = 0;
+  /** Which obstacles the steering assist steers round (default: all of them). */
+  avoids?: (collider: RAPIER.Collider) => boolean;
   /** Tyre grip multiplier (1 = normal): oil, punctures. */
   grip = 1;
   braking = false;
@@ -148,6 +150,7 @@ export class VehicleSim {
     wheelPoints(layout).forEach((p, i) => {
       vc.setWheelChassisConnectionPointCs(i, p);
       vc.setWheelRadius(i, layout.radius);
+      vc.setWheelMaxSuspensionForce(i, this.tune.maxSuspensionForce);
     });
     const [main, cabin] = this.chassisColliders;
     main.setHalfExtents(chassis.body.half);
@@ -279,7 +282,7 @@ export class VehicleSim {
         const o = rotate(r, { x: offsetX, y: 0.05, z: 2.4 });
         const hit = this.world.castRayAndGetNormal(
           new RAPIER.Ray({ x: t.x + o.x, y: t.y + o.y, z: t.z + o.z }, dir),
-          range, true, undefined, RAY_GROUPS, undefined, this.body,
+          range, true, undefined, RAY_GROUPS, undefined, this.body, this.avoids,
         );
         if (!hit || hit.normal.y > 0.5) return { clear: 1, side: 0 }; // ignore ramps and floors
         const c = hit.collider.translation();

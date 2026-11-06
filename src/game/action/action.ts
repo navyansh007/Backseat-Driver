@@ -311,8 +311,8 @@ export class ActionMode {
     // whoever is moving faster deals more of the damage
     const ps = Math.abs(this.car.sim.forwardSpeed()), es = Math.abs(e.sim.forwardSpeed());
     const share = es / (ps + es + 0.1);
-    // rams hurt only the player: pursuers go down to weapons and traps alone
-    if (this.state !== 'over') this.damagePlayer(base * (0.3 + 0.6 * share) * e.stats.ram, base / 60);
+    // rams hurt only the player (pursuers go down to weapons and traps, or under a heavy car, see main.ts)
+    if (this.state !== 'over') this.damagePlayer(base * (0.3 + 0.6 * share) * e.stats.ram * (this.car.def.heavy?.armour ?? 1), base / 60);
     this.audio.impact(Math.min(1, base / 40));
     return true;
   }

@@ -47,7 +47,7 @@ export class Rival {
   constructor(readonly id: string, carId: string, private phys: Physics, scene: THREE.Scene) {
     this.def = carDef(carId);
     const spec = this.def.spec;
-    this.mats = makeCarMaterials(this.def.paint, spec.plate, { seeThrough: !this.def.blackout, rim: this.def.rim, solid: this.def.solid, interior: this.def.interior });
+    this.mats = makeCarMaterials(this.def.paint, spec.plate, { seeThrough: !this.def.blackout, rim: this.def.rim, solid: this.def.solid, interior: this.def.interior, caliper: this.def.caliper });
     const parts = buildCar(spec, { includeWheels: false, interior: !this.def.blackout });
     const bodyMesh = carMeshes(parts, this.mats);
     bodyMesh.position.y = -TUNING.rideHeight;

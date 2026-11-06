@@ -52,6 +52,8 @@ const RESTITUTION = 0.25; // how much the piece bounces off the bumper
 const DRAG = 0.35; // share of the hitter's sideways velocity the piece picks up (friction)
 const RESPAWN_AFTER = 25;
 const STEP = 1 / 60;
+/** Up to this mass (every ordinary car) an anchor shears at its `breakSpeed`; heavier hitters do it slower. */
+const BREAK_MASS = 2000;
 
 /**
  * Fences, lamp posts, flag poles and bollards. They start as fixed bodies and turn
@@ -72,6 +74,11 @@ export class Breakables {
   private v = new THREE.Vector3();
 
   constructor(private phys: Physics) {}
+
+  /** This collider belongs to a piece that can be broken. */
+  has(collider: RAPIER.Collider) {
+    return this.byCollider.has(collider.handle);
+  }
 
   /** Add an anchored piece; `attach` binds its visual to the new body. */
   add(def: BreakDef, pos: THREE.Vector3, rot: THREE.Quaternion, shape: PieceShape, attach: (body: RAPIER.RigidBody) => Visual) {
@@ -142,7 +149,7 @@ export class Breakables {
     if (!hitter || !hitter.isDynamic()) return;
     // the solver just took this much closing speed out of the hitter (≈ (1 + e)·u)
     const u = (ev.totalForceMagnitude() * STEP) / hitter.mass() / 1.1;
-    if (u < piece.def.breakSpeed) return;
+    if (u < breakSpeed(piece.def, hitter)) return;
     const t = hitter.translation();
     const from = new THREE.Vector3(t.x, t.y, t.z);
     const { normal } = this.contact(piece, from);
@@ -195,7 +202,7 @@ export class Breakables {
     const { point, normal } = this.contact(piece, from);
     const u = -vel.dot(normal); // closing speed
     const def = piece.def;
-    if (u < def.breakSpeed) return false;
+    if (u < breakSpeed(def, hitter)) return false;
 
     const M = hitter.mass();
     const m = def.mass;
@@ -278,4 +285,9 @@ export class Breakables {
     p.collider.setCollisionGroups(groups(G.WORLD, 0xffff));
     this.write(p);
   }
+}
+
+/** Closing speed that snaps the anchor: what shears it is momentum, so a truck needs less speed. */
+function breakSpeed(def: BreakDef, hitter: RAPIER.RigidBody) {
+  return def.breakSpeed * Math.min(1, BREAK_MASS / hitter.mass());
 }
