@@ -6,7 +6,7 @@
  */
 import {
   ARENA_HP, ARENA_VERSION, COUNTDOWN_MS, DAMAGE_PER_POINT, KILL_POINTS, MATCH_MINUTES, MAX_HIT, MAX_PLAYERS, RESPAWN_MS, SHIELD_MS,
-  cleanName, rank, type ClientMsg, type Phase, type PlayerInfo, type RoomMsg, type ServerMsg,
+  cleanName, rank, type ClientMsg, type Listing, type Phase, type PlayerInfo, type RoomMsg, type ServerMsg,
 } from '../src/shared/arena';
 import { CAR_IDS, DEFAULT_CAR } from '../src/shared/cars';
 import { MAX_FRAME } from '../src/shared/protocol';
@@ -31,6 +31,8 @@ interface Player extends PlayerInfo {
 const GRACE_MS = 15000;
 /** Score changes are sent to everyone at most this often. */
 const ROOM_EVERY_MS = 250;
+/** An open arena reminds the lobby it exists this often, even when nothing changes. */
+const RELIST_MS = 30000;
 const PEER_ID_RE = /^[0-9a-f]{8}$/;
 
 export function parseArenaParams(rawUrl: string) {
@@ -47,13 +49,21 @@ export class ArenaRoom {
   private pending = new Map<Conn, string>();
   private phase: Phase = 'lobby';
   private host = '';
+  private open = false;
   private minutes: number = MATCH_MINUTES[1];
   private startsAt = 0;
   private endsAt = 0;
   private dirty = false;
   private roomSentAt = 0;
+  private listed = 'null';
+  private listedAt = 0;
 
-  constructor(readonly code: string, private now: () => number = Date.now) {}
+  constructor(
+    readonly code: string,
+    /** tells the lobby this arena's state; null takes it off the list */
+    private onListing: (code: string, listing: Listing | null) => void = () => {},
+    private now: () => number = Date.now,
+  ) {}
 
   /** Nobody connected, and nobody's place is being kept. */
   get empty() {
@@ -98,6 +108,21 @@ export class ArenaRoom {
     if (this.phase === 'play' && now >= this.endsAt) this.finish();
     for (const p of this.players.values()) if (!p.conn && now - p.leftAt > GRACE_MS) this.drop(p);
     if (this.dirty && now - this.roomSentAt >= ROOM_EVERY_MS) this.sendRoom();
+    this.publish();
+  }
+
+  /** Keep the lobby's list right: open arenas with someone here to meet, outside the results screen. */
+  private publish() {
+    const here = [...this.players.values()].some((p) => p.conn);
+    const listing: Listing | null = this.open && here && this.phase !== 'results'
+      ? { players: this.players.size, phase: this.phase, endsAt: this.phase === 'play' ? this.endsAt : 0 }
+      : null;
+    const key = JSON.stringify(listing);
+    const now = this.now();
+    if (key === this.listed && (!listing || now - this.listedAt < RELIST_MS)) return;
+    this.listed = key;
+    this.listedAt = now;
+    this.onListing(this.code, listing);
   }
 
   // ------------------------------------------------------------------ joining
@@ -118,6 +143,9 @@ export class ArenaRoom {
       p.leftAt = 0;
     } else {
       if (this.players.size >= MAX_PLAYERS) return this.refuse(conn, 'full');
+      // matchmaking never puts a stranger in a private arena, even if it closed a moment ago
+      if (msg.open && this.players.size && !this.open) return this.refuse(conn, 'closed');
+      if (!this.players.size) this.open = msg.open === true;
       p = {
         id, name: this.uniqueName(name), car, score: 0, kills: 0, deaths: 0, alive: false, hp: ARENA_HP, at: this.now(),
         conn, deadAt: 0, shieldUntil: 0, leftAt: 0, carry: 0,
@@ -163,6 +191,12 @@ export class ArenaRoom {
         // cars are chosen before the match: once it starts, they're locked
         if (this.phase !== 'play' && CAR_IDS.includes(msg.car)) {
           p.car = msg.car;
+          this.sendRoom();
+        }
+        break;
+      case 'open':
+        if (p.id === this.host && this.open !== !!msg.on) {
+          this.open = !!msg.on;
           this.sendRoom();
         }
         break;
@@ -266,7 +300,7 @@ export class ArenaRoom {
     this.dirty = false;
     this.roomSentAt = this.now();
     const msg: RoomMsg = {
-      t: 'room', now: this.roomSentAt, host: this.host, phase: this.phase, minutes: this.minutes,
+      t: 'room', now: this.roomSentAt, host: this.host, open: this.open, phase: this.phase, minutes: this.minutes,
       startsAt: this.phase === 'play' ? this.startsAt : 0, endsAt: this.phase === 'play' ? this.endsAt : 0,
       players: [...this.players.values()].map(info),
     };

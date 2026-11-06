@@ -39,7 +39,7 @@ const ui = {
   letterbox: $('letterbox'), card: $('stunt-card'), cardTitle: $('stunt-title'), cardTags: $('stunt-tags'),
   cardStats: $('stunt-stats'), cardPoints: $('stunt-points'), modes: $('modes'), qrMode: $('qr-mode'), restart: $('a-restart'),
   garage: $('garage'), driver: $('driver'), driverName: $<HTMLInputElement>('driver-name'),
-  arCreate: $<HTMLButtonElement>('ar-create'), arEnter: $<HTMLButtonElement>('ar-enter'), arCopy: $('ar-copy'), arStart: $('ar-start'),
+  arFind: $<HTMLButtonElement>('ar-find'), arCreate: $<HTMLButtonElement>('ar-create'), arEnter: $<HTMLButtonElement>('ar-enter'), arCopy: $('ar-copy'), arStart: $('ar-start'),
   arLeave: $('ar-leave'), arAgain: $('ar-again'), arQuit: $('ar-quit'),
   pair: $('pair'), pairQr: $<HTMLCanvasElement>('pair-qr'), pairCode: $('pair-code'), pairUrl: $<HTMLAnchorElement>('pair-url'),
   pairDot: $('pair-dot'), pairStatus: $('pair-status'), pairClose: $('pair-close'), pairLeave: $('pair-leave'),
@@ -230,6 +230,7 @@ async function boot() {
   // online arena: other players' cars, the match, its hud
   const arena = new ArenaMode(scene, phys, car, fx, wreck, audio, destruction, {
     join: $('ar-join'), lobby: $('ar-lobby'), code: $<HTMLInputElement>('ar-code'), note: $('ar-note'), room: $('ar-room'),
+    online: $('ar-online'), find: ui.arFind, openRow: $('ar-open-row'), open: $<HTMLInputElement>('ar-open'), access: $('ar-access'),
     players: $('ar-players'), host: $('ar-host'), minutes: $('ar-minutes'), wait: $('ar-wait'),
     clock: $('ar-clock'), hp: $('ar-hp'), hpText: $('ar-hp-text'), place: $('ar-place'), points: $('ar-pts'), board: $('ar-board'),
     feed: $('ar-feed'), banner: $('ar-banner'), bannerSub: $('ar-banner-sub'), bannerTitle: $('ar-banner-title'), bannerNote: $('ar-banner-note'),
@@ -443,6 +444,10 @@ async function boot() {
     const name = needName();
     if (name) arena.join(code, name, carId);
   };
+  ui.arFind.addEventListener('click', () => {
+    const name = needName();
+    if (name) void arena.find(name, carId);
+  });
   ui.arCreate.addEventListener('click', () => {
     const name = needName();
     if (name) arena.join(null, name, carId);

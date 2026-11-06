@@ -26,7 +26,7 @@ kbd { font: 600 10px 'JetBrains Mono', monospace; padding: 2px 6px; border-radiu
 .title { position: fixed; inset: 0; display: flex; align-items: center; justify-content: space-between; gap: 40px;
   padding: 6vh 7vw; z-index: 6; transition: opacity 0.7s ease;
   background: linear-gradient(90deg, rgba(240,246,248,0.78) 0%, rgba(240,246,248,0.35) 45%, rgba(240,246,248,0) 70%); }
-.title-left { max-width: 460px; }
+.title-left { max-width: 460px; max-height: 100%; overflow-y: auto; }
 .title h1 { font-weight: 200; font-size: clamp(44px, 6vw, 78px); line-height: 0.95; margin: 0 0 18px; letter-spacing: -0.03em; }
 .title h1 b { font-weight: 600; }
 .tag { font-weight: 300; font-size: 17px; line-height: 1.5; margin: 0 0 28px; color: var(--ink-soft); }
@@ -234,8 +234,17 @@ body.mode-arena .not-arena { display: none !important; }
 .mode[data-mode='arena'].on { border-color: #2f6fd0; }
 .mode[data-mode='arena'].on b { color: #2a62b8; }
 .gone { display: none !important; }
+/* a full arena needs the room: the heading goes while you're in one, leaving the start button on screen */
+.title-left:has(.ar-lobby:not(.gone)) :is(h1, .tag) { display: none; }
 .arena-panel { display: grid; gap: 12px; max-width: 380px; margin: 0 0 20px; }
 .ar-join, .ar-lobby { display: grid; gap: 10px; justify-items: start; }
+.ar-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.ar-online { display: flex; align-items: center; gap: 8px; margin: 0; font: 500 12px 'JetBrains Mono', monospace; color: var(--ink-soft); }
+.ar-online::before { content: ''; width: 8px; height: 8px; border-radius: 50%; background: #2fa866; box-shadow: 0 0 0 3px rgba(47,168,102,0.18); }
+.ar-online.off::before { background: var(--ink-soft); box-shadow: none; }
+.ar-open { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 500; cursor: pointer; }
+.ar-open input { width: 16px; height: 16px; margin: 0; accent-color: #2f6fd0; cursor: pointer; }
+.ar-room .ar-access.on { color: #2a8a56; }
 button.ghost.solid { background: var(--ink); color: #fff; border-color: var(--ink); }
 button.ghost.solid:hover { background: #0f1a22; }
 button.ghost.small { font-size: 12px; padding: 6px 12px; }
@@ -246,8 +255,8 @@ button.ghost:disabled { opacity: 0.45; cursor: default; }
 .ar-room { display: flex; align-items: baseline; gap: 10px; }
 .ar-room small { font: 600 10px 'JetBrains Mono', monospace; letter-spacing: 0.22em; text-transform: uppercase; color: var(--ink-soft); }
 .ar-room b { font: 600 24px 'JetBrains Mono', monospace; letter-spacing: 0.22em; }
-.ar-players { list-style: none; margin: 0; padding: 6px; display: grid; gap: 2px; width: 100%; border-radius: 14px; background: var(--glass); border: 1px solid var(--line); backdrop-filter: blur(10px); }
-.ar-players li { display: flex; justify-content: space-between; gap: 12px; padding: 7px 10px; border-radius: 9px; font-size: 14px; font-weight: 500; }
+.ar-players { list-style: none; margin: 0; padding: 6px; display: grid; gap: 2px; width: 100%; max-height: max(120px, 34vh); overflow-y: auto; border-radius: 14px; background: var(--glass); border: 1px solid var(--line); backdrop-filter: blur(10px); }
+.ar-players li { display: flex; justify-content: space-between; gap: 12px; padding: 4px 10px; border-radius: 9px; font-size: 14px; font-weight: 500; }
 .ar-players li:nth-child(odd) { background: rgba(255,255,255,0.35); }
 .ar-players small { font: 600 9px 'JetBrains Mono', monospace; letter-spacing: 0.16em; text-transform: uppercase; color: var(--accent); }
 .ar-players em { font-style: normal; font-size: 12px; color: var(--ink-soft); white-space: nowrap; }

@@ -22,7 +22,7 @@ export class ArenaClient {
   /** connected and welcomed (true), or trying to get back (false) */
   onStatus: (online: boolean) => void = () => {};
 
-  constructor(readonly code: string, private hello: { name: string; car: string }) {
+  constructor(readonly code: string, private hello: { name: string; car: string; open?: boolean }) {
     this.id = tabId();
     this.connect();
   }
@@ -73,7 +73,7 @@ export class ArenaClient {
     this.welcomed = false;
     ws.onopen = () => {
       this.retry = 0;
-      this.send({ t: 'hello', name: this.hello.name, car: this.hello.car, v: ARENA_VERSION });
+      this.send({ t: 'hello', name: this.hello.name, car: this.hello.car, v: ARENA_VERSION, open: this.hello.open });
     };
     ws.onmessage = (ev) => {
       let msg: ServerMsg;
@@ -87,6 +87,8 @@ export class ArenaClient {
       if (msg.t === 'welcome') {
         this.welcomed = true;
         this.name = msg.name;
+        // we're in: coming back after a dropped connection is a reconnect, not matchmaking
+        this.hello.open = false;
         this.offset = msg.now - Date.now();
         this.onStatus(true);
       } else if (msg.t === 'room') {

@@ -15,8 +15,10 @@ Inspired by the remote-controlled car chase in *Tomorrow Never Dies* (1997). All
 - **The world.** A spacious two-level car park with ramps and a roof jump, parked cars you can push, traffic, birds, clouds and a rental showroom.
 - **Driver name.** Type it on the title screen; it's kept on this browser and shown on the arena scoreboard and kill feed (2–16 letters, numbers, spaces, `_ - .`).
 - **Modes.** Pick on the title screen. *Casual* is the free drive. *Action* clears the traffic and sends waves of black saloons after you; the QR code opens the matching remote. *Arena* is online multiplayer (below).
-- **Arena (online multiplayer).** Up to 8 drivers in the same car park, wrecking each other for destruction points until the clock runs out.
-  - Pick your car, then **create an arena** and share its code (or the **copy invite link** button), or type a code and **join**. The car is locked once the match starts.
+- **Arena (online multiplayer).** Up to 10 drivers in the same car park, wrecking each other for destruction points until the clock runs out.
+  - The panel shows how many drivers are online right now (everyone with the game open, in any mode) and how many arenas are open.
+  - Pick your car, then **join a random arena** to land in an open arena with at least one driver in it. If none is open, a new open arena is made for the next driver to find.
+  - Or **create an arena** and share its code (or the **copy invite link** button), or type a code and **join**. Arenas are private until their host ticks **let anyone online join this arena**, which lets random drivers land in it. The car is locked once the match starts.
   - The host picks 3, 5 or 10 minutes and starts the match; everyone gets a 3-second countdown. Players can also join a match already under way.
   - Every car has 400 armour. Guns and missiles hurt other players; rams and the car park's own explosions don't. A wreck scores **100 points**, plus **1 point for every 4 armour** you knock off anyone. Most points when time is up wins; ties go to fewer wrecks, then whoever got there first.
   - A wrecked car comes back after **5 seconds** at a clear spot away from the others, with 2 seconds of spawn shield.
@@ -74,7 +76,7 @@ npx wrangler login     # once
 npm run deploy         # builds and deploys to https://backseat-driver.<your-subdomain>.workers.dev
 ```
 
-The Worker (`worker/index.ts`) serves the built files from `dist/` and runs the phone relay in a Durable Object, one per room code. Static files are free and unlimited. The relay uses the WebSocket Hibernation API, so rooms where everyone is on a direct link cost nothing while idle.
+The Worker (`worker/index.ts`) serves the built files from `dist/` and runs the phone relay in a Durable Object, one per room code. One more Durable Object, the lobby, holds a socket from every open game for the online count and keeps the list of open arenas for matchmaking; it hibernates too. Static files are free and unlimited. The relay uses the WebSocket Hibernation API, so rooms where everyone is on a direct link cost nothing while idle.
 
 ## How the phone link works
 

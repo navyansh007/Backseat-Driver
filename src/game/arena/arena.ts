@@ -9,9 +9,10 @@ import { LOT } from '../world/lot';
 import { carInfo } from '../../shared/cars';
 import type { TelemetryMsg } from '../../shared/protocol';
 import {
-  ARENA_HP, MATCH_MINUTES, RESPAWN_MS, SHIELD_MS, rank, type PlayerInfo, type ServerMsg,
+  ARENA_HP, MATCH_MINUTES, MAX_PLAYERS, RESPAWN_MS, SHIELD_MS, rank, type PlayerInfo, type ServerMsg,
 } from '../../shared/arena';
 import { ArenaClient, type ArenaError } from './client';
+import { LobbyClient } from './lobby';
 import { Rivals } from './rivals';
 
 export interface ArenaUi {
@@ -20,6 +21,12 @@ export interface ArenaUi {
   lobby: HTMLElement;
   code: HTMLInputElement;
   note: HTMLElement;
+  online: HTMLElement;
+  find: HTMLButtonElement;
+  /** the host's switch that opens the arena to anyone online, and the label everyone sees */
+  openRow: HTMLElement;
+  open: HTMLInputElement;
+  access: HTMLElement;
   room: HTMLElement;
   players: HTMLElement;
   host: HTMLElement;
@@ -61,8 +68,11 @@ type Spawn = { x: number; y: number; z: number; yaw: number };
 const POSE_EVERY = 1 / 20;
 const HITS_EVERY = 0.1;
 const SPAWN_RETRY_MS = 1000;
+/** Arenas to try when they fill up or close on the way in, before giving up. */
+const FIND_TRIES = 3;
 const ERRORS: Record<ArenaError, string> = {
-  full: 'that arena is full (8 drivers)',
+  full: `that arena is full (${MAX_PLAYERS} drivers)`,
+  closed: 'that arena just went private',
   name: 'pick a name of 2–16 letters or numbers first',
   version: 'that arena is running a newer version: reload the page',
   bad: 'could not join that arena',
@@ -94,6 +104,9 @@ export class ArenaMode {
   private boardKey = '';
   private lobbyKey = '';
   private results: { winner: string | null; players: PlayerInfo[] } | null = null;
+  private lobby = new LobbyClient();
+  /** bumped to call off a search for a random arena */
+  private search = 0;
 
   constructor(
     scene: THREE.Scene,
@@ -114,6 +127,9 @@ export class ArenaMode {
         this.renderLobby(true);
       });
     }
+    ui.open.addEventListener('change', () => this.client?.send({ t: 'open', on: ui.open.checked }));
+    this.lobby.onChange = () => this.renderOnline();
+    this.renderOnline();
   }
 
   /** Connected to an arena (in its lobby or its match). */
@@ -133,14 +149,19 @@ export class ArenaMode {
   }
 
   // ------------------------------------------------------------------ joining
-  /** Join the arena with this code (or open a new one) as `name`, driving `car`. */
-  join(code: string | null, name: string, car: string) {
+  /** Join the arena with this code (or open a new one) as `name`, driving `car`. `tried`: matchmaking sent us here. */
+  join(code: string | null, name: string, car: string, tried: string[] | null = null) {
     this.leave(false);
-    const client = new ArenaClient(code ?? ArenaClient.newCode(), { name, car });
+    const client = new ArenaClient(code ?? ArenaClient.newCode(), { name, car, open: tried !== null });
     this.client = client;
     this.ui.note.textContent = 'joining…';
     client.onMessage = (msg) => this.onMessage(msg);
     client.onError = (reason) => {
+      // beaten to the last seat: there are other arenas
+      if (tried && code && !client.room && (reason === 'full' || reason === 'closed') && tried.length + 1 < FIND_TRIES) {
+        void this.find(name, car, [...tried, code]);
+        return;
+      }
       this.hooks.toast(ERRORS[reason], 4000);
       this.ui.note.textContent = ERRORS[reason];
       this.leave();
@@ -151,8 +172,26 @@ export class ArenaMode {
     this.renderLobby(true);
   }
 
+  /** Join a random open arena; if there is none, open one for the next driver to find. */
+  async find(name: string, car: string, tried: string[] = []) {
+    this.leave(false);
+    const search = ++this.search;
+    this.ui.find.disabled = true;
+    this.ui.note.textContent = 'looking for an open arena…';
+    try {
+      const code = await this.lobby.find(tried);
+      if (search === this.search) this.join(code, name, car, tried);
+    } catch {
+      if (search === this.search) this.ui.note.textContent = 'could not reach the lobby · try again in a moment';
+    } finally {
+      if (search === this.search) this.ui.find.disabled = false;
+    }
+  }
+
   /** Leave the arena (and go back to the join form). */
   leave(notify = true) {
+    this.search++;
+    this.ui.find.disabled = false;
     if (!this.client) return;
     this.client.leave();
     this.client = null;
@@ -502,6 +541,14 @@ export class ArenaMode {
       .join('');
   }
 
+  private renderOnline() {
+    const { online, rooms } = this.lobby;
+    const line = this.ui.online;
+    line.classList.toggle('off', online === null);
+    const arenas = rooms === 0 ? 'no open arenas yet' : rooms === 1 ? '1 open arena' : `${rooms} open arenas`;
+    line.textContent = online === null ? 'reaching the lobby…' : `${online} online · ${arenas}`;
+  }
+
   /** The title-screen side: the join form, or the lobby with its players and the host's start button. */
   renderLobby(force = false) {
     const ui = this.ui;
@@ -511,7 +558,7 @@ export class ArenaMode {
     ui.join.classList.toggle('gone', inLobby);
     ui.lobby.classList.toggle('gone', !inLobby);
     if (!client || !room) return;
-    const key = JSON.stringify([room.host, room.phase, this.minutes, room.players.map((p) => [p.id, p.name, p.car])]);
+    const key = JSON.stringify([room.host, room.open, room.phase, this.minutes, room.players.map((p) => [p.id, p.name, p.car])]);
     if (key === this.lobbyKey && !force) return;
     this.lobbyKey = key;
     ui.room.textContent = client.code;
@@ -524,8 +571,15 @@ export class ArenaMode {
       .join('');
     const host = client.isHost;
     ui.host.classList.toggle('gone', !host);
-    ui.wait.classList.toggle('gone', host);
-    ui.wait.textContent = room.phase === 'play' ? 'a match is on · you will join it' : `waiting for ${this.name(room.host)} to start the match`;
+    ui.openRow.classList.toggle('gone', !host);
+    ui.open.checked = room.open;
+    ui.access.textContent = room.open ? 'open' : 'private';
+    ui.access.classList.toggle('on', room.open);
+    const alone = room.players.length === 1;
+    ui.wait.classList.toggle('gone', host && !(alone && room.open));
+    ui.wait.textContent = room.phase === 'play' ? 'a match is on · you will join it'
+      : host ? 'waiting for another driver · anyone online can land here'
+      : `waiting for ${this.name(room.host)} to start the match`;
     for (const b of Array.from(ui.minutes.children) as HTMLElement[]) b.classList.toggle('on', Number(b.dataset.min) === this.minutes);
   }
 

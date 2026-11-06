@@ -5,7 +5,8 @@
  */
 
 export const ARENA_PATH = '/arena';
-export const MAX_PLAYERS = 8;
+export const LOBBY_PATH = '/lobby';
+export const MAX_PLAYERS = 10;
 /** armour of every car in the arena */
 export const ARENA_HP = 400;
 /** a wrecked car waits this long before it can respawn */
@@ -71,8 +72,11 @@ export type FxMsg = { t: 'fx' } & (
 );
 
 export type ClientMsg =
-  | { t: 'hello'; name: string; car: string; v: number }
+  /** `open`: sent here by matchmaking, so the arena must be open (and if it's new, it opens) */
+  | { t: 'hello'; name: string; car: string; v: number; open?: boolean }
   | { t: 'car'; car: string }
+  /** the host opens the arena to anyone online, or closes it again */
+  | { t: 'open'; on: boolean }
   | { t: 'start'; minutes: number }
   | { t: 'lobby' }
   | { t: 'hit'; to: string; dmg: number }
@@ -85,6 +89,8 @@ export interface RoomMsg {
   /** server clock, for the countdowns */
   now: number;
   host: string;
+  /** random drivers can be matched into this arena */
+  open: boolean;
   phase: Phase;
   minutes: number;
   /** when the cars are let go, and when the match ends (server time; 0 outside a match) */
@@ -95,7 +101,7 @@ export interface RoomMsg {
 
 export type ServerMsg =
   | { t: 'welcome'; id: string; name: string; now: number; room: string }
-  | { t: 'error'; reason: 'full' | 'name' | 'version' | 'bad' }
+  | { t: 'error'; reason: 'full' | 'closed' | 'name' | 'version' | 'bad' }
   | RoomMsg
   | (PoseMsg & { from: string })
   | (FxMsg & { from: string })
@@ -105,7 +111,27 @@ export type ServerMsg =
   | { t: 'end'; winner: string | null; players: PlayerInfo[] };
 
 /** Bumped when the protocol changes, so an old tab can't join a newer arena. */
-export const ARENA_VERSION = 1;
+export const ARENA_VERSION = 2;
+
+/** What an open arena tells the lobby about itself. */
+export interface Listing {
+  players: number;
+  phase: Phase;
+  /** when its match ends (0 outside a match) */
+  endsAt: number;
+}
+
+/** A match with less than this left isn't worth being sent to. */
+export const MIN_MATCH_LEFT_MS = 30000;
+/** The online count goes out at most this often. */
+export const LOBBY_EVERY_MS = 2000;
+
+export type LobbyClientMsg = { t: 'find'; skip?: string[] };
+
+export type LobbyServerMsg =
+  /** drivers online right now, and arenas with a free seat */
+  | { t: 'lobby'; online: number; rooms: number }
+  | { t: 'found'; code: string };
 
 /** Standings, best first: points, then fewer deaths, then whoever got there first. */
 export function rank(players: PlayerInfo[]) {

@@ -41,8 +41,12 @@
           <button class="mode" data-mode="arena" role="radio"><b>arena</b><small>online · wreck other players</small></button>
         </div>
         <div class="arena-panel for-arena">
+          <p class="ar-online off" id="ar-online" aria-live="polite">reaching the lobby…</p>
           <div class="ar-join" id="ar-join">
-            <button class="ghost solid" id="ar-create">create an arena</button>
+            <div class="ar-actions">
+              <button class="ghost solid" id="ar-find">join a random arena</button>
+              <button class="ghost" id="ar-create">create an arena</button>
+            </div>
             <div class="ar-code">
               <input id="ar-code" maxlength="12" placeholder="arena code" autocomplete="off" spellcheck="false" />
               <button class="ghost" id="ar-enter">join</button>
@@ -50,7 +54,8 @@
             <p class="ar-note" id="ar-note">pick your car below; it stays yours for the whole match</p>
           </div>
           <div class="ar-lobby gone" id="ar-lobby">
-            <div class="ar-room"><small>arena</small><b id="ar-room">—</b><button class="ghost small" id="ar-copy">copy invite link</button></div>
+            <div class="ar-room"><small>arena</small><b id="ar-room">—</b><small class="ar-access" id="ar-access">private</small><button class="ghost small" id="ar-copy">copy invite link</button></div>
+            <label class="ar-open" id="ar-open-row"><input type="checkbox" id="ar-open" /><span>let anyone online join this arena</span></label>
             <ol class="ar-players" id="ar-players"></ol>
             <div class="ar-host" id="ar-host">
               <div class="ar-min" id="ar-minutes" role="radiogroup" aria-label="Match length"></div>
