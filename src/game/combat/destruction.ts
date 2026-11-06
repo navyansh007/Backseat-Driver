@@ -45,6 +45,16 @@ interface PendingBlast {
   at: number;
 }
 
+/**
+ * Something outside this module that can be shot and blown up like a car: another player's car in
+ * the arena. Damage is handed to it to deal with (it reports the hit) instead of being kept here.
+ */
+export interface ExternalTarget {
+  body: RAPIER.RigidBody;
+  alive(): boolean;
+  hit(amount: number, point?: THREE.Vector3): void;
+}
+
 export interface DestructionHooks {
   onExplosion(p: THREE.Vector3, scale: number): void;
   onTrafficDestroyed(body: RAPIER.RigidBody): void;
@@ -69,8 +79,9 @@ export class Destruction {
   private pm = new THREE.Matrix4();
   private sphere = new THREE.Sphere();
   destroyedCount = 0;
-  /** What missiles may lock on to: every car, or only the transient ones (action-mode enemies). */
-  targets: 'all' | 'transient' = 'all';
+  /** What missiles may lock on to: every car, only the transient ones (action-mode enemies), or only external ones (arena rivals). */
+  targets: 'all' | 'transient' | 'external' = 'all';
+  private external = new Map<number, ExternalTarget>();
 
   constructor(
     entries: Entry[],
@@ -104,15 +115,27 @@ export class Destruction {
   }
 
   isTarget(body: RAPIER.RigidBody) {
+    const x = this.external.get(body.handle);
+    if (x) return x.alive();
     const d = this.byHandle.get(body.handle);
     return !!d && !d.dead && !d.suspended;
   }
 
   /** Live destructible cars, for missile lock-on. */
   *cars() {
+    if (this.targets !== 'transient') for (const x of this.external.values()) if (x.alive()) yield x.body;
+    if (this.targets === 'external') return;
     for (const d of this.list) {
       if (d.car && !d.dead && !d.suspended && (this.targets === 'all' || d.transient)) yield d.body;
     }
+  }
+
+  addExternal(t: ExternalTarget) {
+    this.external.set(t.body.handle, t);
+  }
+
+  removeExternal(body: RAPIER.RigidBody) {
+    this.external.delete(body.handle);
   }
 
   /** Health left, 0–1 (1 for anything unknown). */
@@ -165,6 +188,11 @@ export class Destruction {
   }
 
   damage(body: RAPIER.RigidBody, amount: number, point?: THREE.Vector3) {
+    const x = this.external.get(body.handle);
+    if (x) {
+      if (amount > 0 && x.alive()) x.hit(amount, point);
+      return;
+    }
     const d = this.byHandle.get(body.handle);
     if (!d || d.dead || d.suspended) return;
     d.hp -= amount;
@@ -265,6 +293,15 @@ export class Destruction {
       const k = 1 - Math.sqrt(dist2) / b.radius;
       if (d.body.isDynamic()) push(d.body, d.body.mass(), k);
       this.damage(d.body, b.damage * k);
+    }
+    // external targets are hurt but not pushed (they move themselves); a blast with no damage is only for show
+    if (b.damage > 0) {
+      for (const x of this.external.values()) {
+        if (!x.alive()) continue;
+        const t = x.body.translation();
+        const dist2 = (t.x - b.p.x) ** 2 + (t.y - b.p.y) ** 2 + (t.z - b.p.z) ** 2;
+        if (dist2 < r2) x.hit(b.damage * (1 - Math.sqrt(dist2) / b.radius), b.p);
+      }
     }
     // the player's car gets thrown around too (and, in action mode, hurt)
     const pt = this.player.translation();

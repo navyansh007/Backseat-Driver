@@ -349,9 +349,9 @@ export class CarAudio {
     notes.forEach((f, i) => this.tone('sine', f, f, 0.14, 0.4, i * 0.09));
   }
 
-  /** One machine-gun round: sharp noise crack plus a low punch. */
-  gunshot() {
-    if (!this.ctx) return;
+  /** One machine-gun round: sharp noise crack plus a low punch. `vol` scales it (other players' guns, further off). */
+  gunshot(vol = 1) {
+    if (!this.ctx || vol < 0.02) return;
     const ctx = this.ctx;
     const t = ctx.currentTime;
     const src = ctx.createBufferSource();
@@ -361,7 +361,7 @@ export class CarAudio {
     bp.frequency.value = 1800 + Math.random() * 600;
     bp.Q.value = 0.8;
     const g = ctx.createGain();
-    g.gain.setValueAtTime(0.5, t);
+    g.gain.setValueAtTime(0.5 * vol, t);
     g.gain.exponentialRampToValueAtTime(0.001, t + 0.09);
     src.connect(bp).connect(g).connect(this.sfx);
     src.start(t, Math.random() * 1.5);
@@ -371,7 +371,7 @@ export class CarAudio {
     o.frequency.setValueAtTime(160, t);
     o.frequency.exponentialRampToValueAtTime(50, t + 0.06);
     const og = ctx.createGain();
-    og.gain.setValueAtTime(0.25, t);
+    og.gain.setValueAtTime(0.25 * vol, t);
     og.gain.exponentialRampToValueAtTime(0.001, t + 0.07);
     o.connect(og).connect(this.sfx);
     o.start(t);
@@ -379,8 +379,8 @@ export class CarAudio {
   }
 
   /** Missile launch: rising filtered whoosh. */
-  launch() {
-    if (!this.ctx) return;
+  launch(vol = 1) {
+    if (!this.ctx || vol < 0.02) return;
     const ctx = this.ctx;
     const t = ctx.currentTime;
     const src = ctx.createBufferSource();
@@ -392,7 +392,7 @@ export class CarAudio {
     f.frequency.exponentialRampToValueAtTime(2600, t + 0.5);
     const g = ctx.createGain();
     g.gain.setValueAtTime(0.0001, t);
-    g.gain.exponentialRampToValueAtTime(0.7, t + 0.05);
+    g.gain.exponentialRampToValueAtTime(0.7 * vol, t + 0.05);
     g.gain.exponentialRampToValueAtTime(0.001, t + 1.1);
     src.connect(f).connect(g).connect(this.sfx);
     src.start(t, Math.random());

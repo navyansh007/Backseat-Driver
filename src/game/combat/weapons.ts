@@ -15,6 +15,10 @@ export interface WeaponEvents {
   launch(): void;
   /** a round struck something at p */
   hit?(p: THREE.Vector3): void;
+  /** for other players to see (multiplayer): a round flew from a to b, a missile left, a missile went off */
+  shot?(from: THREE.Vector3, to: THREE.Vector3, hit: boolean): void;
+  missile?(pos: THREE.Vector3, vel: THREE.Vector3, target: RAPIER.RigidBody | null): void;
+  boom?(p: THREE.Vector3): void;
 }
 
 const FIRE_INTERVAL = 1 / 13;
@@ -26,7 +30,7 @@ const RELOAD = 5;
 const LOCK_RANGE = 150;
 const LOCK_ANGLE = 0.32;
 /** Line-of-sight rays stop on world geometry (walls, fences, pillars) and other cars; loose props don't block. */
-const SIGHT_GROUPS = groups(0xffff, G.WORLD | G.CAR);
+const SIGHT_GROUPS = groups(0xffff, G.WORLD | G.CAR | G.RIVAL);
 
 interface Missile {
   obj: THREE.Group;
@@ -261,6 +265,7 @@ export class Weapons {
     }
     // tracer from just ahead of the muzzle; flash
     this.fx.tracers.tracer(muzzle.clone().addScaledVector(dir, 1.2), end, 0.045, 0.05);
+    this.events.shot?.(muzzle, end, !!hit);
     const lv = this.car.body.linvel();
     this.fx.fire.emit(muzzle, new THREE.Vector3(lv.x, lv.y, lv.z), { life: 0.05, size: 0.45, grow: 1.4, color: 0xfff2c4, color2: 0xff8a2a, alpha: 1 });
     this.muzzleLight.intensity = 25;
@@ -284,6 +289,7 @@ export class Weapons {
     m.obj.position.copy(m.pos);
     this.fx.smoke.emit(m.pos, new THREE.Vector3(0, 1, 0), { life: 1.2, size: 0.8, grow: 3, color: 0xe6e6e6, alpha: 0.6, drag: 2 });
     this.events.launch();
+    this.events.missile?.(m.pos, m.vel, m.target);
   }
 
   private stepMissile(m: Missile, dt: number) {
@@ -314,6 +320,7 @@ export class Weapons {
         if (body) this.destruction.damage(body, 70, p);
       }
       this.destruction.queueBlast(p, 7.5, 150, 12, 1.3, 0);
+      this.events.boom?.(p);
       m.active = false;
       m.obj.visible = false;
       return;

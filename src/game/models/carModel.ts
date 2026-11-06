@@ -1146,9 +1146,9 @@ export function makeCarMaterials(
   const chrome = new THREE.MeshStandardMaterial({ color: 0xe6e9ee, metalness: 1, roughness: 0.16 });
   const sideGlass = new THREE.MeshPhysicalMaterial({ color: 0x0e1418, metalness: 0.1, roughness: 0.04, clearcoat: 1, envMapIntensity: 1.6 });
   return {
-    // metallic by default; a solid colour is deep gloss under the clearcoat
+    // metallic by default; a solid colour gets a soft sheen: a hard clearcoat turns black paint sky-white in the open
     paint: new THREE.MeshPhysicalMaterial(opts.solid
-      ? { color: paintColor, metalness: 0.05, roughness: 0.16, clearcoat: 1, clearcoatRoughness: 0.03, envMapIntensity: 1.4 }
+      ? { color: paintColor, metalness: 0.05, roughness: 0.42, clearcoat: 0.3, clearcoatRoughness: 0.22, envMapIntensity: 0.5 }
       : { color: paintColor, metalness: 0.6, roughness: 0.28, clearcoat: 1, clearcoatRoughness: 0.04, envMapIntensity: 1.25 }),
     // the hero's screens are tinted but see-through so the cabin shows
     glass: opts.seeThrough

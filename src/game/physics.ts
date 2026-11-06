@@ -11,6 +11,8 @@ export const G = {
   CAR: 0x0008,
   /** action-mode pursuers */
   ENEMY: 0x0010,
+  /** other players' cars in the multiplayer arena */
+  RIVAL: 0x0020,
 } as const;
 
 export const groups = (membership: number, filter: number) => (membership << 16) | filter;
